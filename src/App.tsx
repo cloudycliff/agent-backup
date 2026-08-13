@@ -128,6 +128,37 @@ export default function App() {
     accessKey: "",
     secretKey: "",
   });
+  const [estimate, setEstimate] = useState<{
+    file_count: number;
+    bytes: number;
+  } | null>(null);
+  const [progress, setProgress] = useState<{
+    phase: string;
+    current: number;
+    total: number;
+    label: string;
+    bytes_done: number;
+    bytes_total: number;
+    percent: number;
+  } | null>(null);
+
+  const formatBytes = (n: number) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
+
+  const refreshEstimate = useCallback(async () => {
+    try {
+      const data = await invoke<{ file_count: number; bytes: number }>(
+        "estimate_backup_size",
+      );
+      setEstimate(data);
+    } catch {
+      setEstimate(null);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     const data = await invoke<Bootstrap>("get_bootstrap");
@@ -149,6 +180,7 @@ export default function App() {
   useEffect(() => {
     refresh().catch((e) => setError(String(e)));
     refreshHistory(false).catch(() => undefined);
+    refreshEstimate().catch(() => undefined);
     invoke<string>("get_docs_hint")
       .then(setDocs)
       .catch(() => undefined);
@@ -163,17 +195,31 @@ export default function App() {
       }
     })().catch(() => undefined);
 
-    const unlisten = listen<BackupResult>("backup-finished", (event) => {
+    const unlistenFinished = listen<BackupResult>("backup-finished", (event) => {
       setLastResult(event.payload);
+      setProgress(null);
       if (event.payload.overall_status !== "ok") {
         setError(event.payload.message);
       }
       refreshHistory().catch(() => undefined);
+      refreshEstimate().catch(() => undefined);
+    });
+    const unlistenProgress = listen<{
+      phase: string;
+      current: number;
+      total: number;
+      label: string;
+      bytes_done: number;
+      bytes_total: number;
+      percent: number;
+    }>("backup-progress", (event) => {
+      setProgress(event.payload);
     });
     return () => {
-      unlisten.then((f) => f()).catch(() => undefined);
+      unlistenFinished.then((f) => f()).catch(() => undefined);
+      unlistenProgress.then((f) => f()).catch(() => undefined);
     };
-  }, [refresh, refreshHistory]);
+  }, [refresh, refreshHistory, refreshEstimate]);
 
   useEffect(() => {
     if (tab === "history") {
@@ -191,6 +237,7 @@ export default function App() {
     try {
       const data = await fn();
       setBoot(data);
+      await refreshEstimate();
     } catch (e) {
       setError(String(e));
     }
@@ -199,10 +246,20 @@ export default function App() {
   async function runBackup() {
     setBusy(true);
     setError(null);
+    setProgress({
+      phase: "estimating",
+      current: 0,
+      total: 1,
+      label: "准备中…",
+      bytes_done: 0,
+      bytes_total: estimate?.bytes ?? 0,
+      percent: 0,
+    });
     try {
       const result = await invoke<BackupResult>("run_backup_now");
       setLastResult(result);
       await refreshHistory();
+      await refreshEstimate();
       if (result.overall_status === "failed") {
         setError(result.message);
       }
@@ -211,16 +268,27 @@ export default function App() {
       await refreshHistory().catch(() => undefined);
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
   async function retryBackup() {
     setBusy(true);
     setError(null);
+    setProgress({
+      phase: "estimating",
+      current: 0,
+      total: 1,
+      label: "准备重跑…",
+      bytes_done: 0,
+      bytes_total: estimate?.bytes ?? 0,
+      percent: 0,
+    });
     try {
       const result = await invoke<BackupResult>("retry_backup");
       setLastResult(result);
       await refreshHistory();
+      await refreshEstimate();
       if (result.overall_status === "failed") {
         setError(result.message);
       } else {
@@ -230,6 +298,7 @@ export default function App() {
       setError(String(e));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -317,8 +386,37 @@ export default function App() {
               已开启加密但未设置密码。请到「设置」填写密码后再备份。
             </p>
           )}
-          <p className="muted">将写入 {enabledDestCount} 个启用目标</p>
-
+          <p className="muted">
+            将写入 {enabledDestCount} 个启用目标
+            {estimate
+              ? ` · 预估 ${estimate.file_count} 个文件 / ${formatBytes(estimate.bytes)}`
+              : ""}
+          </p>
+          {progress && (
+            <div className="progress-card">
+              <div className="row-between">
+                <span>{progress.label}</span>
+                <span className="muted">
+                  {progress.percent}%
+                  {progress.total > 0
+                    ? ` · ${progress.current}/${progress.total}`
+                    : ""}
+                </span>
+              </div>
+              <div className="progress-bar">
+                <div
+                  className="progress-fill"
+                  style={{ width: `${Math.min(100, progress.percent)}%` }}
+                />
+              </div>
+              {progress.bytes_total > 0 && (
+                <p className="muted" style={{ marginTop: 6 }}>
+                  {formatBytes(progress.bytes_done)} /{" "}
+                  {formatBytes(progress.bytes_total)}
+                </p>
+              )}
+            </div>
+          )}
           <div className="cards">
             {boot.agents.map((agent) => (
               <article

@@ -7,7 +7,9 @@
 
 所以有了这个项目：把本机已经装好的 Agent 配置，**单向备份**到本地目录或 S3 兼容存储。不追求花哨的双向同步，先保证「换机 / 翻车时还有一份」。
 
-目前支持：**Windows + macOS**，内置 Cursor、Claude Code、Codex、Workbuddy，也可以自己加文件夹。
+目前支持：**Windows + macOS**。内置探测 Cursor、Claude Code、Codex、Workbuddy、Windsurf、Continue、Cline、Kiro、Aider、Gemini CLI；也可以自己加文件夹。
+
+备份时会先做**体积预估**，过程中显示进度（按源打包 / 按目标写入）。
 
 ---
 
@@ -22,6 +24,7 @@
 - 可选 Zip AES-256 加密（默认开，需设密码）  
 - 手动备份 + 每日定时；托盘常驻、可登录启动  
 - 失败才系统通知；有历史记录，支持整次重跑  
+- 备份前体积预估；备份中显示进度条（打包 / 写入目标）  
 
 产物大致长这样：
 

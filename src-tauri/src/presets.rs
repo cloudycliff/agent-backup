@@ -162,7 +162,11 @@ pub fn resolve_root_path(root: &RootSpec) -> Result<Option<PathBuf>, String> {
     } else {
         &root.mac
     };
-    Ok(Some(home.join(sub)))
+    let mut path = home;
+    for part in sub.split(['/', '\\']).filter(|p| !p.is_empty()) {
+        path = path.join(part);
+    }
+    Ok(Some(path))
 }
 
 pub fn effective_group_enabled(

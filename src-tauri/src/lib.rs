@@ -64,7 +64,7 @@ pub fn run() {
                                     return;
                                 }
                             };
-                            match backup::run_backup(&cfg, "manual") {
+                            match backup::run_backup_with_app(Some(&handle), &cfg, "manual") {
                                 Ok(r) => {
                                     eprintln!("backup {}: {}", r.overall_status, r.message);
                                     crate::notify::notify_and_emit(&handle, &r);
@@ -108,6 +108,7 @@ pub fn run() {
             commands::set_agent_path_enabled,
             commands::run_backup_now,
             commands::retry_backup,
+            commands::estimate_backup_size,
             commands::list_history,
             commands::get_latest_failure,
             commands::open_config_dir,

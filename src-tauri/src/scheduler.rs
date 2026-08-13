@@ -6,7 +6,6 @@ use std::thread;
 use std::time::Duration;
 use tauri::AppHandle;
 
-use crate::backup::run_backup;
 use crate::config::{config_dir, load_config};
 use crate::notify::{notify_and_emit, notify_error};
 
@@ -79,7 +78,7 @@ fn tick(app: &AppHandle) {
         return;
     }
 
-    match run_backup(&cfg, "schedule") {
+    match crate::backup::run_backup_with_app(Some(app), &cfg, "schedule") {
         Ok(r) => {
             eprintln!("[scheduler] backup {}: {}", r.overall_status, r.message);
             state.last_run_date = Some(today);

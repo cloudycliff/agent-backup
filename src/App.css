@@ -282,3 +282,25 @@ input[type="time"] {
   width: 100%;
   min-width: 0;
 }
+
+.progress-card {
+  margin: 12px 0;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #d7e6dd;
+  background: #fff;
+}
+
+.progress-bar {
+  margin-top: 8px;
+  height: 10px;
+  border-radius: 999px;
+  background: #e8f2ec;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1a5f4a, #2f9e74);
+  transition: width 0.2s ease;
+}

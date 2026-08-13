@@ -466,3 +466,90 @@ fn collect_files_tree(
     files.sort_by(|a, b| a.1.cmp(&b.1));
     Ok(files)
 }
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SourceEstimate {
+    pub key: String,
+    pub label: String,
+    pub file_count: u64,
+    pub bytes: u64,
+}
+
+fn sum_files(files: &[(PathBuf, String)]) -> (u64, u64) {
+    let mut bytes = 0u64;
+    let mut count = 0u64;
+    for (abs, _) in files {
+        count += 1;
+        if let Ok(meta) = fs::metadata(abs) {
+            bytes += meta.len();
+        }
+    }
+    (count, bytes)
+}
+
+pub fn estimate_agent(
+    agent: &ResolvedAgent,
+    enabled_group_ids: &[String],
+    exclusions: &ExclusionSettings,
+) -> Result<SourceEstimate, String> {
+    let root = agent
+        .root_path
+        .clone()
+        .ok_or_else(|| "根目录未解析".to_string())?;
+    let mut includes = Vec::new();
+    for group in &agent.groups {
+        if enabled_group_ids.iter().any(|id| id == &group.id) {
+            includes.extend(group.include.clone());
+        }
+    }
+    if includes.is_empty() {
+        return Ok(SourceEstimate {
+            key: agent.key.clone(),
+            label: agent.label.clone(),
+            file_count: 0,
+            bytes: 0,
+        });
+    }
+    let files = collect_files(&root, &includes, exclusions, &agent.hard_exclude)?;
+    let (file_count, bytes) = sum_files(&files);
+    Ok(SourceEstimate {
+        key: agent.key.clone(),
+        label: agent.label.clone(),
+        file_count,
+        bytes,
+    })
+}
+
+pub fn estimate_custom(
+    id: &str,
+    label: &str,
+    path: &Path,
+    exclusions: &ExclusionSettings,
+) -> Result<SourceEstimate, String> {
+    if !path.exists() {
+        return Ok(SourceEstimate {
+            key: id.to_string(),
+            label: label.to_string(),
+            file_count: 0,
+            bytes: 0,
+        });
+    }
+    let files = if path.is_dir() {
+        collect_files_tree(path, exclusions, &[])?
+    } else {
+        let root = path.parent().unwrap_or(path);
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("file")
+            .to_string();
+        collect_files(root, &[name], exclusions, &[])?
+    };
+    let (file_count, bytes) = sum_files(&files);
+    Ok(SourceEstimate {
+        key: id.to_string(),
+        label: label.to_string(),
+        file_count,
+        bytes,
+    })
+}

@@ -33,3 +33,6 @@ src-tauri/gen
 Thumbs.db
 *.pem
 *.key
+
+# Local release staging
+release-assets/
