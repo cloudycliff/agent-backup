@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::path::PathBuf;
 
-use crate::backup::{run_backup, BackupRunResult};
+use crate::backup::{estimate_backup, run_backup_with_app, BackupEstimate, BackupRunResult};
 use crate::config::{
     config_dir, config_path, ensure_agent_defaults, load_config, open_path_in_explorer, save_config,
     user_presets_path, AppConfig, CustomSource, Destination, LocalDestination, S3Destination,
@@ -258,9 +258,15 @@ pub fn set_agent_path_enabled(
 }
 
 #[tauri::command]
+pub fn estimate_backup_size() -> Result<BackupEstimate, String> {
+    let cfg = load_config()?;
+    estimate_backup(&cfg)
+}
+
+#[tauri::command]
 pub fn run_backup_now(app: tauri::AppHandle) -> Result<BackupRunResult, String> {
     let cfg = load_config()?;
-    match run_backup(&cfg, "manual") {
+    match run_backup_with_app(Some(&app), &cfg, "manual") {
         Ok(r) => {
             crate::notify::notify_and_emit(&app, &r);
             Ok(r)
@@ -275,7 +281,7 @@ pub fn run_backup_now(app: tauri::AppHandle) -> Result<BackupRunResult, String> 
 #[tauri::command]
 pub fn retry_backup(app: tauri::AppHandle) -> Result<BackupRunResult, String> {
     let cfg = load_config()?;
-    match run_backup(&cfg, "retry") {
+    match run_backup_with_app(Some(&app), &cfg, "retry") {
         Ok(r) => {
             crate::notify::notify_and_emit(&app, &r);
             Ok(r)

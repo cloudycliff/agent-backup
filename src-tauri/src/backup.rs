@@ -5,9 +5,12 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use tauri::{AppHandle, Emitter};
 
 use crate::config::{history_path, resolve_hostname, slugify_label, AppConfig, Destination};
-use crate::packager::{pack_agent, pack_custom, PackedSource};
+use crate::packager::{
+    estimate_agent, estimate_custom, pack_agent, pack_custom, PackedSource, SourceEstimate,
+};
 use crate::presets::{
     agent_enabled, effective_group_enabled, load_merged_presets, resolve_agents,
 };
@@ -27,6 +30,24 @@ pub struct BackupRunResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupProgress {
+    pub phase: String,
+    pub current: u32,
+    pub total: u32,
+    pub label: String,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub percent: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BackupEstimate {
+    pub file_count: u64,
+    pub bytes: u64,
+    pub sources: Vec<SourceEstimate>,
+}
+
 fn encryption_password(cfg: &AppConfig) -> Result<Option<String>, String> {
     if !cfg.encryption.enabled {
         return Ok(None);
@@ -44,31 +65,24 @@ fn encryption_password(cfg: &AppConfig) -> Result<Option<String>, String> {
     Ok(pw)
 }
 
-pub fn run_backup(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, String> {
-    let _guard = BACKUP_LOCK
-        .try_lock()
-        .map_err(|_| "已有备份正在进行，已跳过".to_string())?;
-    run_backup_inner(cfg, trigger)
+fn emit_progress(app: Option<&AppHandle>, progress: BackupProgress) {
+    if let Some(app) = app {
+        let _ = app.emit("backup-progress", &progress);
+    }
 }
 
-fn run_backup_inner(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, String> {
-    let password = encryption_password(cfg)?;
-    let password_ref = password.as_deref();
-
-    let enabled_dests: Vec<&Destination> = cfg.destinations.iter().filter(|d| d.enabled()).collect();
-    if enabled_dests.is_empty() {
-        return Err("请先添加并启用至少一个备份目标".into());
+fn percent(done: u64, total: u64) -> u32 {
+    if total == 0 {
+        0
+    } else {
+        ((done.min(total) as f64 / total as f64) * 100.0).round() as u32
     }
+}
 
-    let timestamp = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
-    let hostname = resolve_hostname(cfg);
+pub fn estimate_backup(cfg: &AppConfig) -> Result<BackupEstimate, String> {
     let presets = load_merged_presets()?;
     let agents = resolve_agents(&presets)?;
-
-    let work_root = std::env::temp_dir().join("agent-backup").join(&timestamp);
-    fs::create_dir_all(&work_root).map_err(|e| e.to_string())?;
-
-    let mut packed: Vec<PackedSource> = Vec::new();
+    let mut sources = Vec::new();
 
     for agent in agents.iter().filter(|a| !a.disabled && a.installed) {
         if !agent_enabled(cfg, &agent.key) {
@@ -83,20 +97,163 @@ fn run_backup_inner(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, S
         if enabled_groups.is_empty() {
             continue;
         }
-        packed.push(pack_agent(
+        sources.push(estimate_agent(agent, &enabled_groups, &cfg.exclusions)?);
+    }
+
+    for custom in cfg.sources.custom.iter().filter(|c| c.enabled) {
+        sources.push(estimate_custom(
+            &custom.id,
+            &custom.label,
+            Path::new(&custom.path),
+            &cfg.exclusions,
+        )?);
+    }
+
+    let file_count = sources.iter().map(|s| s.file_count).sum();
+    let bytes = sources.iter().map(|s| s.bytes).sum();
+    Ok(BackupEstimate {
+        file_count,
+        bytes,
+        sources,
+    })
+}
+
+pub fn run_backup(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, String> {
+    run_backup_with_app(None, cfg, trigger)
+}
+
+pub fn run_backup_with_app(
+    app: Option<&AppHandle>,
+    cfg: &AppConfig,
+    trigger: &str,
+) -> Result<BackupRunResult, String> {
+    let _guard = BACKUP_LOCK
+        .try_lock()
+        .map_err(|_| "已有备份正在进行，已跳过".to_string())?;
+    run_backup_inner(app, cfg, trigger)
+}
+
+fn run_backup_inner(
+    app: Option<&AppHandle>,
+    cfg: &AppConfig,
+    trigger: &str,
+) -> Result<BackupRunResult, String> {
+    let password = encryption_password(cfg)?;
+    let password_ref = password.as_deref();
+
+    let enabled_dests: Vec<&Destination> = cfg.destinations.iter().filter(|d| d.enabled()).collect();
+    if enabled_dests.is_empty() {
+        return Err("请先添加并启用至少一个备份目标".into());
+    }
+
+    emit_progress(
+        app,
+        BackupProgress {
+            phase: "estimating".into(),
+            current: 0,
+            total: 1,
+            label: "正在估算体积…".into(),
+            bytes_done: 0,
+            bytes_total: 0,
+            percent: 0,
+        },
+    );
+    let estimate = estimate_backup(cfg).unwrap_or(BackupEstimate {
+        file_count: 0,
+        bytes: 0,
+        sources: vec![],
+    });
+    let bytes_total = estimate.bytes;
+
+    let timestamp = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+    let hostname = resolve_hostname(cfg);
+    let presets = load_merged_presets()?;
+    let agents = resolve_agents(&presets)?;
+
+    let work_root = std::env::temp_dir().join("agent-backup").join(&timestamp);
+    fs::create_dir_all(&work_root).map_err(|e| e.to_string())?;
+
+    let mut pack_jobs: Vec<(String, String)> = Vec::new();
+    for agent in agents.iter().filter(|a| !a.disabled && a.installed) {
+        if !agent_enabled(cfg, &agent.key) {
+            continue;
+        }
+        let enabled_groups: Vec<String> = agent
+            .groups
+            .iter()
+            .filter(|g| effective_group_enabled(cfg, &agent.key, g))
+            .map(|g| g.id.clone())
+            .collect();
+        if enabled_groups.is_empty() {
+            continue;
+        }
+        pack_jobs.push((agent.key.clone(), agent.label.clone()));
+    }
+    for custom in cfg.sources.custom.iter().filter(|c| c.enabled) {
+        pack_jobs.push((custom.id.clone(), custom.label.clone()));
+    }
+    let pack_total = pack_jobs.len() as u32;
+    let mut packed: Vec<PackedSource> = Vec::new();
+    let mut bytes_done = 0u64;
+    let mut pack_idx = 0u32;
+
+    for agent in agents.iter().filter(|a| !a.disabled && a.installed) {
+        if !agent_enabled(cfg, &agent.key) {
+            continue;
+        }
+        let enabled_groups: Vec<String> = agent
+            .groups
+            .iter()
+            .filter(|g| effective_group_enabled(cfg, &agent.key, g))
+            .map(|g| g.id.clone())
+            .collect();
+        if enabled_groups.is_empty() {
+            continue;
+        }
+        pack_idx += 1;
+        emit_progress(
+            app,
+            BackupProgress {
+                phase: "packing".into(),
+                current: pack_idx,
+                total: pack_total.max(1),
+                label: format!("打包 {}", agent.label),
+                bytes_done,
+                bytes_total,
+                percent: percent(bytes_done, bytes_total.max(1)),
+            },
+        );
+        let item = pack_agent(
             agent,
             &enabled_groups,
             &cfg.exclusions,
             &work_root,
             &timestamp,
             password_ref,
-        ));
+        );
+        if item.status == "ok" {
+            bytes_done += item.bytes;
+        }
+        packed.push(item);
     }
 
     for custom in cfg.sources.custom.iter().filter(|c| c.enabled) {
+        pack_idx += 1;
+        emit_progress(
+            app,
+            BackupProgress {
+                phase: "packing".into(),
+                current: pack_idx,
+                total: pack_total.max(1),
+                label: format!("打包 {}", custom.label),
+                bytes_done,
+                bytes_total,
+                percent: percent(bytes_done, bytes_total.max(1)),
+            },
+        );
         let fallback = format!("custom-{}", &custom.id[..8.min(custom.id.len())]);
         let slug = slugify_label(&custom.label, &fallback);
-        packed.push(pack_custom(
+        let item = pack_custom(
             &custom.id,
             &custom.label,
             Path::new(&custom.path),
@@ -105,7 +262,11 @@ fn run_backup_inner(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, S
             &timestamp,
             &slug,
             password_ref,
-        ));
+        );
+        if item.status == "ok" {
+            bytes_done += item.bytes;
+        }
+        packed.push(item);
     }
 
     if !packed.iter().any(|p| p.status == "ok") {
@@ -113,8 +274,21 @@ fn run_backup_inner(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, S
         return Err("没有可备份的内容（请检查勾选与路径）".into());
     }
 
+    let dest_total = enabled_dests.len() as u32;
     let mut dest_results = Vec::new();
-    for dest in &enabled_dests {
+    for (i, dest) in enabled_dests.iter().enumerate() {
+        emit_progress(
+            app,
+            BackupProgress {
+                phase: "uploading".into(),
+                current: (i as u32) + 1,
+                total: dest_total.max(1),
+                label: format!("写入目标 {}", dest.name()),
+                bytes_done,
+                bytes_total: bytes_done.max(1),
+                percent: percent((i as u64) + 1, dest_total.max(1) as u64),
+            },
+        );
         match dest {
             Destination::Local { id, name, local, .. } => {
                 let target = PathBuf::from(&local.root_path)
@@ -163,9 +337,21 @@ fn run_backup_inner(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, S
         }
     }
 
+    emit_progress(
+        app,
+        BackupProgress {
+            phase: "finishing".into(),
+            current: 1,
+            total: 1,
+            label: "写入清单…".into(),
+            bytes_done,
+            bytes_total: bytes_done.max(1),
+            percent: 95,
+        },
+    );
+
     let manifest_json = build_manifest_value(&packed, cfg, &hostname, &timestamp, &dest_results);
-    let manifest_bytes =
-        serde_json::to_vec_pretty(&manifest_json).map_err(|e| e.to_string())?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest_json).map_err(|e| e.to_string())?;
 
     for dest in &enabled_dests {
         let ok = dest_results.iter().any(|d| {
@@ -250,6 +436,20 @@ fn run_backup_inner(cfg: &AppConfig, trigger: &str) -> Result<BackupRunResult, S
 
     append_history(&result)?;
     let _ = fs::remove_dir_all(&work_root);
+
+    emit_progress(
+        app,
+        BackupProgress {
+            phase: "done".into(),
+            current: 1,
+            total: 1,
+            label: "完成".into(),
+            bytes_done,
+            bytes_total: bytes_done.max(1),
+            percent: 100,
+        },
+    );
+
     Ok(result)
 }
 

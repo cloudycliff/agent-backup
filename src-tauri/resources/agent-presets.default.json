@@ -257,6 +257,210 @@
         "*.sqlite-shm",
         "*.sqlite-wal"
       ]
+    },
+    {
+      "key": "windsurf",
+      "label": "Windsurf",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".codeium/windsurf",
+        "mac": ".codeium/windsurf",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": ["mcp_config.json", "user_settings.pb"]
+        },
+        {
+          "id": "rules",
+          "label": "Rules",
+          "default_enabled": true,
+          "include": ["rules/", "memories/global_rules.md"]
+        },
+        {
+          "id": "skills",
+          "label": "Skills",
+          "default_enabled": true,
+          "include": ["skills/"]
+        },
+        {
+          "id": "workflows",
+          "label": "Workflows",
+          "default_enabled": true,
+          "include": ["global_workflows/"]
+        },
+        {
+          "id": "memories",
+          "label": "Memories",
+          "default_enabled": false,
+          "include": ["memories/"]
+        }
+      ],
+      "hard_exclude": ["*.log", "cache/"]
+    },
+    {
+      "key": "continue",
+      "label": "Continue",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".continue",
+        "mac": ".continue",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": [
+            "config.json",
+            "config.ts",
+            "config.yaml",
+            "config.yml",
+            ".continuerc.json"
+          ]
+        },
+        {
+          "id": "skills",
+          "label": "Skills / Prompts",
+          "default_enabled": true,
+          "include": ["skills/", "prompts/", "rules/"]
+        },
+        {
+          "id": "assistants",
+          "label": "Assistants",
+          "default_enabled": true,
+          "include": ["assistants/", "agents/"]
+        },
+        {
+          "id": "sessions",
+          "label": "会话 / 索引",
+          "default_enabled": false,
+          "include": ["sessions/", "index/", "dev_data/"]
+        }
+      ],
+      "hard_exclude": ["index/", "*.sqlite", "*.sqlite-shm", "*.sqlite-wal"]
+    },
+    {
+      "key": "cline",
+      "label": "Cline",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".cline",
+        "mac": ".cline",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置与数据",
+          "default_enabled": true,
+          "include": ["data/", "settings/", "config/"]
+        },
+        {
+          "id": "tasks",
+          "label": "任务历史",
+          "default_enabled": false,
+          "include": ["tasks/", "history/"]
+        }
+      ],
+      "hard_exclude": ["cache/", "*.log"]
+    },
+    {
+      "key": "kiro",
+      "label": "Kiro",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".kiro",
+        "mac": ".kiro",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": ["settings/", "argv.json"]
+        },
+        {
+          "id": "skills",
+          "label": "Skills",
+          "default_enabled": true,
+          "include": ["skills/", "powers/"]
+        },
+        {
+          "id": "steering",
+          "label": "Steering",
+          "default_enabled": true,
+          "include": ["steering/"]
+        },
+        {
+          "id": "extensions",
+          "label": "Extensions",
+          "default_enabled": false,
+          "include": ["extensions/"]
+        }
+      ],
+      "hard_exclude": ["Cache/", "CachedData/", "logs/"]
+    },
+    {
+      "key": "aider",
+      "label": "Aider",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".aider",
+        "mac": ".aider",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": [".aider.conf.yml", "config.yml", "config.yaml"]
+        },
+        {
+          "id": "history",
+          "label": "历史",
+          "default_enabled": false,
+          "include": ["chat-history/", "history/"]
+        }
+      ],
+      "hard_exclude": ["*.key", "cache/"]
+    },
+    {
+      "key": "gemini",
+      "label": "Gemini CLI",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".gemini",
+        "mac": ".gemini",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": ["settings.json", "config.json", "GEMINI.md"]
+        },
+        {
+          "id": "skills",
+          "label": "Skills / Commands",
+          "default_enabled": true,
+          "include": ["skills/", "commands/", "extensions/"]
+        },
+        {
+          "id": "history",
+          "label": "历史",
+          "default_enabled": false,
+          "include": ["tmp/", "history/", "sessions/"]
+        }
+      ],
+      "hard_exclude": ["tmp/", "cache/", "*.log"]
     }
   ]
 }

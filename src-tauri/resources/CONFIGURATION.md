@@ -15,6 +15,9 @@
 内置默认预设打包在应用内：`agent-presets.default.json`。  
 若用户配置目录没有 `agent-presets.json`，则完全使用内置默认。
 
+内置覆盖的 Agent（按 `key`）：`cursor`、`claude-code`、`codex`、`workbuddy`、`windsurf`、`continue`、`cline`、`kiro`、`aider`、`gemini`。  
+`root.win` / `root.mac` 支持多级路径，例如 Windsurf 用 `.codeium/windsurf`。
+
 ## 合并规则
 
 1. 加载内置 `agent-presets.default.json`
