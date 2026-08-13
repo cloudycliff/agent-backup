@@ -1,0 +1,262 @@
+{
+  "version": 1,
+  "agents": [
+    {
+      "key": "cursor",
+      "label": "Cursor",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".cursor",
+        "mac": ".cursor",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": [
+            "mcp.json",
+            "argv.json",
+            "ide_state.json",
+            "unified_repo_list.json",
+            ".gitignore"
+          ]
+        },
+        {
+          "id": "rules",
+          "label": "Rules",
+          "default_enabled": true,
+          "include": ["rules/"]
+        },
+        {
+          "id": "skills",
+          "label": "Skills",
+          "default_enabled": true,
+          "include": ["skills/", "skills-cursor/"]
+        },
+        {
+          "id": "agents",
+          "label": "Agents",
+          "default_enabled": true,
+          "include": ["agents/"]
+        },
+        {
+          "id": "hooks",
+          "label": "Hooks",
+          "default_enabled": true,
+          "include": ["hooks/"]
+        },
+        {
+          "id": "plugins",
+          "label": "Plugins",
+          "default_enabled": false,
+          "include": ["plugins/"]
+        },
+        {
+          "id": "sessions",
+          "label": "会话与项目状态",
+          "default_enabled": false,
+          "include": ["projects/", "plans/", "ai-tracking/"]
+        }
+      ],
+      "hard_exclude": []
+    },
+    {
+      "key": "claude-code",
+      "label": "Claude Code",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".claude",
+        "mac": ".claude",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": ["settings.json", ".mcp.json", "CLAUDE.md"]
+        },
+        {
+          "id": "rules",
+          "label": "Rules",
+          "default_enabled": true,
+          "include": ["rules/"]
+        },
+        {
+          "id": "skills",
+          "label": "Skills",
+          "default_enabled": true,
+          "include": ["skills/"]
+        },
+        {
+          "id": "hooks",
+          "label": "Hooks",
+          "default_enabled": true,
+          "include": ["hooks/"]
+        },
+        {
+          "id": "agents",
+          "label": "Agents",
+          "default_enabled": true,
+          "include": ["agents/"]
+        },
+        {
+          "id": "sessions",
+          "label": "会话与项目状态",
+          "default_enabled": false,
+          "include": ["sessions/", "transcripts/", "projects/"]
+        }
+      ],
+      "hard_exclude": ["backups/"]
+    },
+    {
+      "key": "codex",
+      "label": "Codex",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".codex",
+        "mac": ".codex",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": [
+            "config.toml",
+            "AGENTS.md",
+            ".codex-global-state.json"
+          ]
+        },
+        {
+          "id": "skills",
+          "label": "Skills",
+          "default_enabled": true,
+          "include": ["skills/"]
+        },
+        {
+          "id": "rules",
+          "label": "Rules",
+          "default_enabled": true,
+          "include": ["rules/"]
+        },
+        {
+          "id": "plugins",
+          "label": "Plugins",
+          "default_enabled": false,
+          "include": ["plugins/"]
+        },
+        {
+          "id": "memories",
+          "label": "Memories",
+          "default_enabled": false,
+          "include": ["memories/"]
+        },
+        {
+          "id": "sessions",
+          "label": "会话",
+          "default_enabled": false,
+          "include": [
+            "sessions/",
+            "archived_sessions/",
+            "dictation-history/"
+          ]
+        }
+      ],
+      "hard_exclude": [
+        "auth.json",
+        ".sandbox-secrets/",
+        ".sandbox/",
+        ".sandbox-bin/",
+        "tmp/",
+        ".tmp/",
+        "*.sqlite",
+        "*.sqlite-shm",
+        "*.sqlite-wal"
+      ]
+    },
+    {
+      "key": "workbuddy",
+      "label": "Workbuddy",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".workbuddy",
+        "mac": ".workbuddy",
+        "env_override": "WORKBUDDY_CONFIG_DIR"
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": [
+            ".mcp.json",
+            "models.json",
+            "CODEBUDDY.md",
+            "MEMORY.md"
+          ]
+        },
+        {
+          "id": "skills",
+          "label": "Skills",
+          "default_enabled": true,
+          "include": ["skills/"]
+        },
+        {
+          "id": "experts",
+          "label": "Experts",
+          "default_enabled": true,
+          "include": ["experts/"]
+        },
+        {
+          "id": "plugins",
+          "label": "Plugins / Connectors",
+          "default_enabled": false,
+          "include": [
+            "plugins/",
+            "connectors/",
+            "connectors-marketplace/"
+          ]
+        },
+        {
+          "id": "memory",
+          "label": "Memory",
+          "default_enabled": false,
+          "include": ["memory/"]
+        },
+        {
+          "id": "sessions",
+          "label": "会话与项目状态",
+          "default_enabled": false,
+          "include": [
+            "sessions/",
+            "projects/",
+            "plans/",
+            "tasks/",
+            "traces/"
+          ]
+        }
+      ],
+      "hard_exclude": [
+        "credentials/",
+        "logs/",
+        "binaries/",
+        "blobs/",
+        "vendor/",
+        "local_storage/",
+        "clipboard-images/",
+        ".workbuddy-sqlite-migrations/",
+        "shell-snapshots/",
+        "artifact-index/",
+        "audit-log/",
+        "pending-telemetry/",
+        "*.sqlite",
+        "*.sqlite-shm",
+        "*.sqlite-wal"
+      ]
+    }
+  ]
+}
