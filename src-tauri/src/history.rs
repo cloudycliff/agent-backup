@@ -40,9 +40,12 @@ pub fn load_history(limit: usize, only_failed: bool) -> Result<Vec<HistoryEntry>
     Ok(entries)
 }
 
+/// The latest run, if it did not fully succeed. A later successful run clears it.
 pub fn latest_non_ok() -> Result<Option<HistoryEntry>, String> {
-    let entries = load_history(20, true)?;
-    Ok(entries.into_iter().next())
+    Ok(load_history(1, false)?
+        .into_iter()
+        .next()
+        .filter(|e| e.overall_status != Status::Ok))
 }
 
 /// Most recent run that wrote (or confirmed) at least one complete copy.
