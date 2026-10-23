@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::config::{user_presets_path, AgentSourceState, AppConfig};
+use crate::config::{user_presets_path, write_atomic, AppConfig};
 
 const DEFAULT_PRESETS: &str = include_str!("../resources/agent-presets.default.json");
 
@@ -262,17 +262,6 @@ pub fn agent_enabled(cfg: &AppConfig, agent_key: &str) -> bool {
         .unwrap_or(true)
 }
 
-pub fn default_agent_state(agent: &ResolvedAgent) -> AgentSourceState {
-    let mut paths = HashMap::new();
-    for g in &agent.groups {
-        paths.insert(g.id.clone(), g.default_enabled);
-    }
-    AgentSourceState {
-        enabled: true,
-        paths,
-    }
-}
-
 pub fn reset_user_presets() -> Result<(), String> {
     let path = user_presets_path()?;
     if path.exists() {
@@ -290,7 +279,7 @@ pub fn write_user_presets_template_if_missing() -> Result<PathBuf, String> {
             agents: vec![],
         };
         let raw = serde_json::to_string_pretty(&empty).map_err(|e| e.to_string())?;
-        fs::write(&path, raw).map_err(|e| e.to_string())?;
+        write_atomic(&path, raw.as_bytes())?;
     }
     Ok(path)
 }

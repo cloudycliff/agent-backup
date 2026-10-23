@@ -3,6 +3,7 @@ use aws_sdk_s3::config::{BehaviorVersion, Region};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client;
 
+use crate::backup::Status;
 use crate::config::S3Destination;
 use crate::packager::PackedSource;
 
@@ -53,15 +54,13 @@ fn build_client(s3: &S3Destination) -> Result<Client, String> {
     Ok(Client::from_conf(conf))
 }
 
+/// Runs on Tauri's shared runtime. Callers must be on a plain or `spawn_blocking`
+/// thread, never inside an async task.
 fn with_runtime<F, T>(f: F) -> Result<T, String>
 where
     F: std::future::Future<Output = Result<T, String>>,
 {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("创建异步运行时失败: {e}"))?;
-    rt.block_on(f)
+    tauri::async_runtime::block_on(f)
 }
 
 pub fn test_connection(s3: &S3Destination) -> Result<String, String> {
@@ -88,7 +87,7 @@ pub fn upload_archives(
         let bucket = s3.bucket.trim();
         let base = join_key(&s3.prefix, &["backups", hostname, timestamp]);
 
-        for p in packed.iter().filter(|p| p.status == "ok") {
+        for p in packed.iter().filter(|p| p.status == Status::Ok) {
             let key = format!("{}/{}", base, p.archive_name);
             let body = ByteStream::from_path(&p.archive_path)
                 .await

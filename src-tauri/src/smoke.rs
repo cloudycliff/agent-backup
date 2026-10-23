@@ -1,4 +1,4 @@
-use crate::backup::run_backup;
+use crate::backup::{run_backup_with_app, Status};
 use crate::config::{
     ensure_agent_defaults, resolve_hostname, AppConfig, Destination, LocalDestination,
 };
@@ -32,9 +32,9 @@ fn presets_parse_and_backup_local() {
         },
     });
 
-    let result = run_backup(&cfg, "manual").expect("backup");
+    let result = run_backup_with_app(None, &cfg, "manual").expect("backup");
     assert!(
-        result.overall_status == "ok" || result.overall_status == "partial",
+        matches!(result.overall_status, Status::Ok | Status::Partial),
         "{}",
         result.message
     );

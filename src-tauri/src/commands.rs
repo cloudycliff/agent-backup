@@ -6,7 +6,9 @@ use crate::config::{
     config_dir, config_path, ensure_agent_defaults, load_config, open_path_in_explorer, save_config,
     user_presets_path, AppConfig, CustomSource, Destination, LocalDestination, S3Destination,
 };
-use crate::presets::{load_presets, reset_user_presets, ResolvedAgent};
+use crate::presets::{
+    load_presets, reset_user_presets, write_user_presets_template_if_missing, ResolvedAgent,
+};
 
 #[derive(Debug, Serialize)]
 pub struct BootstrapState {
@@ -311,17 +313,8 @@ pub fn open_config_dir() -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_presets_file() -> Result<(), String> {
-    let path = user_presets_path()?;
-    if !path.exists() {
-        let empty = serde_json::json!({ "version": 1, "agents": [] });
-        std::fs::write(
-            &path,
-            serde_json::to_string_pretty(&empty).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    open_path_in_explorer(path.parent().unwrap_or(std::path::Path::new(".")))?;
-    Ok(())
+    let path = write_user_presets_template_if_missing()?;
+    open_path_in_explorer(path.parent().unwrap_or(std::path::Path::new(".")))
 }
 
 #[tauri::command]

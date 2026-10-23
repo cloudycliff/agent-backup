@@ -1,14 +1,14 @@
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
-use crate::backup::BackupRunResult;
+use crate::backup::{BackupRunResult, Status};
 
 pub fn notify_and_emit(app: &AppHandle, result: &BackupRunResult) {
     let _ = app.emit("backup-finished", result);
-    if result.overall_status == "ok" {
+    if result.overall_status == Status::Ok {
         return;
     }
-    let title = if result.overall_status == "partial" {
+    let title = if result.overall_status == Status::Partial {
         "备份部分失败"
     } else {
         "备份失败"
@@ -22,20 +22,7 @@ pub fn notify_and_emit(app: &AppHandle, result: &BackupRunResult) {
 }
 
 pub fn notify_error(app: &AppHandle, err: &str) {
-    let _ = app.emit(
-        "backup-finished",
-        serde_json::json!({
-            "id": null,
-            "created_at": "",
-            "hostname": "",
-            "trigger": "manual",
-            "overall_status": "failed",
-            "work_dir": "",
-            "sources": [],
-            "destinations": [],
-            "message": err,
-        }),
-    );
+    let _ = app.emit("backup-finished", BackupRunResult::failure(err));
     let _ = app
         .notification()
         .builder()

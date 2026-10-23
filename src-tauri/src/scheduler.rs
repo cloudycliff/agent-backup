@@ -126,7 +126,7 @@ fn tick(app: &AppHandle) {
     let _ = save_schedule_state(&state);
     match result {
         Ok(r) => {
-            eprintln!("[scheduler] backup {}: {}", r.overall_status, r.message);
+            eprintln!("[scheduler] backup {:?}: {}", r.overall_status, r.message);
             notify_and_emit(app, &r);
         }
         Err(e) => {
