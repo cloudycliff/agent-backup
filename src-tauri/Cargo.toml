@@ -1,6 +1,6 @@
 [package]
 name = "agent-backup"
-version = "0.2.0"
+version = "0.3.0"
 description = "One-way backup for local AI agent configs"
 authors = ["agent-backup"]
 edition = "2021"
