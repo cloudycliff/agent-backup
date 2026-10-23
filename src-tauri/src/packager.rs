@@ -157,6 +157,7 @@ pub fn zip_files(
     files: &[(PathBuf, String)],
     out_path: &Path,
     password: Option<&str>,
+    on_file: &mut dyn FnMut(u64),
 ) -> Result<(u64, String, u64), String> {
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -185,6 +186,7 @@ pub fn zip_files(
         hasher.update(&buffer);
         total_bytes += buffer.len() as u64;
         file_count += 1;
+        on_file(buffer.len() as u64);
     }
 
     zip.finish().map_err(|e| format!("完成 zip 失败: {e}"))?;
@@ -200,6 +202,7 @@ pub fn pack_agent(
     work_dir: &Path,
     timestamp: &str,
     password: Option<&str>,
+    on_file: &mut dyn FnMut(u64),
 ) -> PackedSource {
     let archive_name = format!("{}_{}.zip", agent.key, timestamp);
     let archive_path = work_dir.join(&archive_name);
@@ -262,7 +265,7 @@ pub fn pack_agent(
             status: "skipped".into(),
             error: None,
         },
-        Ok(files) => match zip_files(&files, &archive_path, password) {
+        Ok(files) => match zip_files(&files, &archive_path, password, on_file) {
             Ok((bytes, sha256, file_count)) => PackedSource {
                 key: agent.key.clone(),
                 source_type: "agent".into(),
@@ -318,6 +321,7 @@ pub fn pack_custom(
     timestamp: &str,
     slug: &str,
     password: Option<&str>,
+    on_file: &mut dyn FnMut(u64),
 ) -> PackedSource {
     let archive_name = format!("{}_{}.zip", slug, timestamp);
     let archive_path = work_dir.join(&archive_name);
@@ -380,7 +384,7 @@ pub fn pack_custom(
             status: "skipped".into(),
             error: None,
         },
-        Ok(files) => match zip_files(&files, &archive_path, password) {
+        Ok(files) => match zip_files(&files, &archive_path, password, on_file) {
             Ok((bytes, sha256, file_count)) => PackedSource {
                 key: id.to_string(),
                 source_type: "custom".into(),

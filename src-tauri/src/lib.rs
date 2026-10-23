@@ -57,23 +57,7 @@ pub fn run() {
                     "backup" => {
                         let handle = app.clone();
                         std::thread::spawn(move || {
-                            let cfg = match config::load_config() {
-                                Ok(c) => c,
-                                Err(e) => {
-                                    crate::notify::notify_error(&handle, &e);
-                                    return;
-                                }
-                            };
-                            match backup::run_backup_with_app(Some(&handle), &cfg, "manual") {
-                                Ok(r) => {
-                                    eprintln!("backup {}: {}", r.overall_status, r.message);
-                                    crate::notify::notify_and_emit(&handle, &r);
-                                }
-                                Err(e) => {
-                                    eprintln!("backup failed: {e}");
-                                    crate::notify::notify_error(&handle, &e);
-                                }
-                            }
+                            let _ = commands::run_and_notify(&handle, "manual");
                         });
                     }
                     "quit" => {

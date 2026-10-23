@@ -5,6 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::config::{history_path, resolve_hostname, slugify_label, AppConfig, Destination};
@@ -71,11 +72,50 @@ fn emit_progress(app: Option<&AppHandle>, progress: BackupProgress) {
     }
 }
 
-fn percent(done: u64, total: u64) -> u32 {
+const PACK_PERCENT_SHARE: f64 = 90.0;
+const UPLOAD_PERCENT_SHARE: f64 = 9.0;
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
+
+fn pack_percent(done: u64, total: u64) -> u32 {
     if total == 0 {
         0
     } else {
-        ((done.min(total) as f64 / total as f64) * 100.0).round() as u32
+        ((done.min(total) as f64 / total as f64) * PACK_PERCENT_SHARE).round() as u32
+    }
+}
+
+fn emit_packing(
+    app: Option<&AppHandle>,
+    current: u32,
+    total: u32,
+    label: &str,
+    raw_done: u64,
+    raw_total: u64,
+) {
+    emit_progress(
+        app,
+        BackupProgress {
+            phase: "packing".into(),
+            current,
+            total: total.max(1),
+            label: label.to_string(),
+            bytes_done: raw_done,
+            bytes_total: raw_total,
+            percent: pack_percent(raw_done, raw_total),
+        },
+    );
+}
+
+struct Throttle(Option<Instant>);
+
+impl Throttle {
+    fn ready(&mut self) -> bool {
+        let now = Instant::now();
+        if self.0.is_some_and(|t| now.duration_since(t) < PROGRESS_INTERVAL) {
+            return false;
+        }
+        self.0 = Some(now);
+        true
     }
 }
 
@@ -163,7 +203,7 @@ fn run_backup_inner(
         bytes: 0,
         sources: vec![],
     });
-    let bytes_total = estimate.bytes;
+    let raw_total = estimate.bytes;
 
     let timestamp = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
     let hostname = resolve_hostname(cfg);
@@ -194,8 +234,9 @@ fn run_backup_inner(
     }
     let pack_total = pack_jobs.len() as u32;
     let mut packed: Vec<PackedSource> = Vec::new();
-    let mut bytes_done = 0u64;
+    let mut raw_done = 0u64;
     let mut pack_idx = 0u32;
+    let mut throttle = Throttle(None);
 
     for agent in agents.iter().filter(|a| !a.disabled && a.installed) {
         if !agent_enabled(cfg, &agent.key) {
@@ -211,18 +252,8 @@ fn run_backup_inner(
             continue;
         }
         pack_idx += 1;
-        emit_progress(
-            app,
-            BackupProgress {
-                phase: "packing".into(),
-                current: pack_idx,
-                total: pack_total.max(1),
-                label: format!("打包 {}", agent.label),
-                bytes_done,
-                bytes_total,
-                percent: percent(bytes_done, bytes_total.max(1)),
-            },
-        );
+        let label = format!("打包 {}", agent.label);
+        emit_packing(app, pack_idx, pack_total, &label, raw_done, raw_total);
         let item = pack_agent(
             agent,
             &enabled_groups,
@@ -230,27 +261,20 @@ fn run_backup_inner(
             &work_root,
             &timestamp,
             password_ref,
+            &mut |n| {
+                raw_done += n;
+                if throttle.ready() {
+                    emit_packing(app, pack_idx, pack_total, &label, raw_done, raw_total);
+                }
+            },
         );
-        if item.status == "ok" {
-            bytes_done += item.bytes;
-        }
         packed.push(item);
     }
 
     for custom in cfg.sources.custom.iter().filter(|c| c.enabled) {
         pack_idx += 1;
-        emit_progress(
-            app,
-            BackupProgress {
-                phase: "packing".into(),
-                current: pack_idx,
-                total: pack_total.max(1),
-                label: format!("打包 {}", custom.label),
-                bytes_done,
-                bytes_total,
-                percent: percent(bytes_done, bytes_total.max(1)),
-            },
-        );
+        let label = format!("打包 {}", custom.label);
+        emit_packing(app, pack_idx, pack_total, &label, raw_done, raw_total);
         let fallback = format!("custom-{}", &custom.id[..8.min(custom.id.len())]);
         let slug = slugify_label(&custom.label, &fallback);
         let item = pack_custom(
@@ -262,10 +286,13 @@ fn run_backup_inner(
             &timestamp,
             &slug,
             password_ref,
+            &mut |n| {
+                raw_done += n;
+                if throttle.ready() {
+                    emit_packing(app, pack_idx, pack_total, &label, raw_done, raw_total);
+                }
+            },
         );
-        if item.status == "ok" {
-            bytes_done += item.bytes;
-        }
         packed.push(item);
     }
 
@@ -284,9 +311,11 @@ fn run_backup_inner(
                 current: (i as u32) + 1,
                 total: dest_total.max(1),
                 label: format!("写入目标 {}", dest.name()),
-                bytes_done,
-                bytes_total: bytes_done.max(1),
-                percent: percent((i as u64) + 1, dest_total.max(1) as u64),
+                bytes_done: 0,
+                bytes_total: 0,
+                percent: (PACK_PERCENT_SHARE
+                    + UPLOAD_PERCENT_SHARE * i as f64 / dest_total.max(1) as f64)
+                    .round() as u32,
             },
         );
         match dest {
@@ -344,9 +373,9 @@ fn run_backup_inner(
             current: 1,
             total: 1,
             label: "写入清单…".into(),
-            bytes_done,
-            bytes_total: bytes_done.max(1),
-            percent: 95,
+            bytes_done: 0,
+            bytes_total: 0,
+            percent: 99,
         },
     );
 
@@ -444,8 +473,8 @@ fn run_backup_inner(
             current: 1,
             total: 1,
             label: "完成".into(),
-            bytes_done,
-            bytes_total: bytes_done.max(1),
+            bytes_done: raw_done,
+            bytes_total: raw_total,
             percent: 100,
         },
     );

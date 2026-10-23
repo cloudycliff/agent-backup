@@ -154,8 +154,18 @@ pub fn add_s3_destination(
     get_bootstrap()
 }
 
+async fn run_blocking<T, F>(f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("后台任务异常: {e}"))?
+}
+
 #[tauri::command]
-pub fn test_s3_destination(
+pub async fn test_s3_destination(
     endpoint: String,
     region: String,
     bucket: String,
@@ -164,14 +174,17 @@ pub fn test_s3_destination(
     secret_key: String,
 ) -> Result<String, String> {
     let _ = prefix;
-    crate::s3::test_connection(&S3Destination {
-        endpoint,
-        region,
-        bucket,
-        prefix: String::new(),
-        access_key,
-        secret_key,
+    run_blocking(move || {
+        crate::s3::test_connection(&S3Destination {
+            endpoint,
+            region,
+            bucket,
+            prefix: String::new(),
+            access_key,
+            secret_key,
+        })
     })
+    .await
 }
 
 #[tauri::command]
@@ -258,39 +271,27 @@ pub fn set_agent_path_enabled(
 }
 
 #[tauri::command]
-pub fn estimate_backup_size() -> Result<BackupEstimate, String> {
-    let cfg = load_config()?;
-    estimate_backup(&cfg)
+pub async fn estimate_backup_size() -> Result<BackupEstimate, String> {
+    run_blocking(|| estimate_backup(&load_config()?)).await
+}
+
+pub fn run_and_notify(app: &tauri::AppHandle, trigger: &str) -> Result<BackupRunResult, String> {
+    let result = load_config().and_then(|cfg| run_backup_with_app(Some(app), &cfg, trigger));
+    match &result {
+        Ok(r) => crate::notify::notify_and_emit(app, r),
+        Err(e) => crate::notify::notify_error(app, e),
+    }
+    result
 }
 
 #[tauri::command]
-pub fn run_backup_now(app: tauri::AppHandle) -> Result<BackupRunResult, String> {
-    let cfg = load_config()?;
-    match run_backup_with_app(Some(&app), &cfg, "manual") {
-        Ok(r) => {
-            crate::notify::notify_and_emit(&app, &r);
-            Ok(r)
-        }
-        Err(e) => {
-            crate::notify::notify_error(&app, &e);
-            Err(e)
-        }
-    }
+pub async fn run_backup_now(app: tauri::AppHandle) -> Result<BackupRunResult, String> {
+    run_blocking(move || run_and_notify(&app, "manual")).await
 }
 
 #[tauri::command]
-pub fn retry_backup(app: tauri::AppHandle) -> Result<BackupRunResult, String> {
-    let cfg = load_config()?;
-    match run_backup_with_app(Some(&app), &cfg, "retry") {
-        Ok(r) => {
-            crate::notify::notify_and_emit(&app, &r);
-            Ok(r)
-        }
-        Err(e) => {
-            crate::notify::notify_error(&app, &e);
-            Err(e)
-        }
-    }
+pub async fn retry_backup(app: tauri::AppHandle) -> Result<BackupRunResult, String> {
+    run_blocking(move || run_and_notify(&app, "retry")).await
 }
 
 #[tauri::command]
@@ -421,4 +422,23 @@ pub fn set_start_on_login(
 #[tauri::command]
 pub fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn s3_call_inside_blocking_task_returns_error_instead_of_panicking() {
+        let result = tauri::async_runtime::block_on(test_s3_destination(
+            "http://127.0.0.1:9".into(),
+            "auto".into(),
+            "bucket".into(),
+            String::new(),
+            "ak".into(),
+            "sk".into(),
+        ));
+        let err = result.expect_err("unreachable endpoint must fail");
+        assert!(err.contains("连接失败"), "{err}");
+    }
 }

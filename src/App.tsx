@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -149,14 +149,16 @@ export default function App() {
     return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
+  const estimateSeq = useRef(0);
   const refreshEstimate = useCallback(async () => {
+    const seq = ++estimateSeq.current;
     try {
       const data = await invoke<{ file_count: number; bytes: number }>(
         "estimate_backup_size",
       );
-      setEstimate(data);
+      if (seq === estimateSeq.current) setEstimate(data);
     } catch {
-      setEstimate(null);
+      if (seq === estimateSeq.current) setEstimate(null);
     }
   }, []);
 
