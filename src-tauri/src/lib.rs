@@ -8,6 +8,7 @@ mod packager;
 mod presets;
 mod s3;
 mod scheduler;
+mod targets;
 #[cfg(test)]
 mod smoke;
 

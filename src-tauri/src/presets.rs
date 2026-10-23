@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,6 +6,8 @@ use std::path::{Path, PathBuf};
 use crate::config::{user_presets_path, write_atomic, AppConfig};
 
 const DEFAULT_PRESETS: &str = include_str!("../resources/agent-presets.default.json");
+/// Highest preset file `version` this build understands.
+const SUPPORTED_PRESET_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PresetFile {
@@ -73,7 +74,15 @@ pub fn load_presets() -> Result<LoadedPresets, String> {
         serde_json::from_str(DEFAULT_PRESETS).map_err(|e| format!("内置预设损坏: {e}"))?;
     let mut warnings = Vec::new();
     let presets = match load_user_presets() {
-        Ok(Some(user)) => merge_presets(defaults, user),
+        Ok(Some(user)) => {
+            if user.version > SUPPORTED_PRESET_VERSION {
+                warnings.push(format!(
+                    "用户预设 version 为 {}，高于本版本支持的 {SUPPORTED_PRESET_VERSION}，新格式的字段可能不会生效",
+                    user.version
+                ));
+            }
+            merge_presets(defaults, user)
+        }
         Ok(None) => defaults,
         Err(e) => {
             warnings.push(format!("{e}，已改用内置预设"));
@@ -99,15 +108,11 @@ fn load_user_presets() -> Result<Option<PresetFile>, String> {
         .map_err(|e| format!("解析用户预设失败: {e}"))
 }
 
+/// Overrides built-in agents in place and appends new ones, so the list keeps the
+/// built-in order followed by user additions in file order.
 fn merge_presets(mut defaults: PresetFile, user: PresetFile) -> PresetFile {
-    let mut map: HashMap<String, AgentPreset> = defaults
-        .agents
-        .drain(..)
-        .map(|a| (a.key.clone(), a))
-        .collect();
-
     for u in user.agents {
-        match map.get_mut(&u.key) {
+        match defaults.agents.iter_mut().find(|a| a.key == u.key) {
             Some(existing) => {
                 if u.label.is_some() {
                     existing.label = u.label;
@@ -126,15 +131,9 @@ fn merge_presets(mut defaults: PresetFile, user: PresetFile) -> PresetFile {
                     existing.detect = u.detect;
                 }
             }
-            None => {
-                map.insert(u.key.clone(), u);
-            }
+            None => defaults.agents.push(u),
         }
     }
-
-    defaults.agents = map.into_values().collect();
-    defaults.agents.sort_by(|a, b| a.key.cmp(&b.key));
-    defaults.version = defaults.version.max(user.version);
     defaults
 }
 
@@ -330,6 +329,28 @@ mod tests {
         for key in ["cursor-cli", "cursor-editor", "kiro-editor", "windsurf-editor", "aider"] {
             assert!(agents.iter().any(|a| a.key == key), "missing preset {key}");
         }
+    }
+
+    #[test]
+    fn merge_keeps_builtin_order_and_appends_user_agents() {
+        let defaults: PresetFile = serde_json::from_str(DEFAULT_PRESETS).unwrap();
+        let builtin: Vec<String> = defaults.agents.iter().map(|a| a.key.clone()).collect();
+        let user: PresetFile = serde_json::from_str(
+            r#"{"version":1,"agents":[
+                {"key":"zz-new","root":{"kind":"home_subdir","win":".zz","mac":".zz"}},
+                {"key":"cursor","label":"My Cursor"},
+                {"key":"aa-new","root":{"kind":"home_subdir","win":".aa","mac":".aa"}}
+            ]}"#,
+        )
+        .unwrap();
+        let merged = merge_presets(defaults, user);
+        let keys: Vec<&str> = merged.agents.iter().map(|a| a.key.as_str()).collect();
+        let mut expected: Vec<&str> = builtin.iter().map(String::as_str).collect();
+        expected.extend(["zz-new", "aa-new"]);
+        assert_eq!(keys, expected);
+        let cursor = merged.agents.iter().find(|a| a.key == "cursor").unwrap();
+        assert_eq!(cursor.label.as_deref(), Some("My Cursor"));
+        assert!(cursor.groups.is_some(), "unset fields keep built-in values");
     }
 
     #[test]

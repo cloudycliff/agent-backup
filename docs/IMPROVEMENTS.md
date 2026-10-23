@@ -82,7 +82,7 @@
 | 8 | 前端拆分为组件 | C4 | 已完成 |
 | 9 | S3 测连改为写入测试；目标可编辑；排除规则可在界面修改；加密未设密码时禁止备份；密码不再 trim；自定义源可单独开关 | 第 5 节第 3、4 条 | 已完成 |
 | 10 | `open_path` 只允许打开备份目标与配置目录；设置 CSP | 第 5 节最后一条 | 已完成 |
-| 11 | 预设合并保留内置顺序、检查 `version`；目标类型抽象为 `Target` trait | 第 5 节第 5、6 条 | 待处理 |
+| 11 | 预设合并保留内置顺序、检查 `version`；目标类型抽象为 `Target` trait | 第 5 节第 5、6 条 | 已完成 |
 | 12 | 各源并行打包 | D6 | 待处理 |
 
 `app.language`（界面多语言）不在本轮：需要先确定支持哪些语言，且后端错误信息也都是中文，单独排期。
@@ -280,3 +280,18 @@
   - 向页面注入 `<style>` 被拦截，说明 CSP 确实生效。
   - 从页面调用 `open_path` 打开 `C:\Windows` 和 `C:\Windows\notepad.exe` 均被拒绝。
 - 未在 macOS 上验证。
+
+### 步骤 11：预设顺序与目标抽象
+
+改动：
+- 预设合并：以前合并后按 key 字母排序，内置的展示顺序（Cursor、Cursor CLI、Claude Code……）丢失。现在内置 Agent 保持文件顺序并原地应用覆盖，用户新增的 Agent 按用户文件中的顺序追加在后面。
+- 预设 `version`：新增 `SUPPORTED_PRESET_VERSION = 1`。用户预设的 `version` 更高时给出警告（界面顶部可见），提示新格式字段可能不生效；以前这个字段读了但没用。
+- 目标抽象：
+  - 新增 `targets.rs`，定义 `Target` trait：`write_archives`、`write_manifest`、`output_dir`（本地目标的 `backups/`，用于递归防护和 `open_path` 白名单）。`LocalDestination`、`S3Destination` 各自实现；本地的 `.partial` 写入逻辑随之迁入。
+  - `Destination` 由"每个变体重复 id / name / enabled"的枚举改为"公共字段 + `#[serde(flatten)] kind`"的结构体，JSON 格式完全不变。原来 `id()`、`name()`、`enabled()` 和 `set_destination_enabled` 里的 4 处逐类型 match 随之消失。
+  - `backup.rs` 里不再有任何按目标类型的分支。新增一种目标类型只需：`DestinationKind` 加一个变体、实现 `Target`、在 `Destination::target` 加一行，以及前端表单。
+  - `open_path` 白名单从本地目标根目录收窄为其 `backups/` 目录（记录里的"打开目录"都在其中）。
+- 新增测试：合并后保持内置顺序并追加用户 Agent、未设置的字段保留内置值；目标 JSON 读入再写出与原文一致；本地写入的原子性测试迁到 `targets.rs` 并覆盖 manifest。
+
+验证：
+- `cargo test` 26 个测试通过；无编译警告。

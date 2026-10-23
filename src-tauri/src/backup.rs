@@ -247,12 +247,8 @@ fn plan_sources(cfg: &AppConfig) -> Result<Vec<SourcePlan>, String> {
 pub fn backup_output_dirs(cfg: &AppConfig) -> Vec<PathBuf> {
     cfg.destinations
         .iter()
-        .filter_map(|d| match d {
-            Destination::Local { local, .. } => {
-                fs::canonicalize(Path::new(&local.root_path).join(BACKUPS_DIR)).ok()
-            }
-            Destination::S3 { .. } => None,
-        })
+        .filter_map(|d| d.target().output_dir())
+        .filter_map(|dir| fs::canonicalize(dir).ok())
         .collect()
 }
 
@@ -293,17 +289,13 @@ pub fn run_backup_with_app(
     result
 }
 
-fn local_target(root: &str, hostname: &str, timestamp: &str) -> PathBuf {
-    PathBuf::from(root).join(BACKUPS_DIR).join(hostname).join(timestamp)
-}
-
 fn run_backup_inner(
     app: Option<&AppHandle>,
     cfg: &AppConfig,
     trigger: &str,
 ) -> Result<BackupRunResult, String> {
     let password = encryption_password(cfg)?;
-    let enabled_dests: Vec<&Destination> = cfg.destinations.iter().filter(|d| d.enabled()).collect();
+    let enabled_dests: Vec<&Destination> = cfg.destinations.iter().filter(|d| d.enabled).collect();
     if enabled_dests.is_empty() {
         return Err("请先添加并启用至少一个备份目标".into());
     }
@@ -351,7 +343,7 @@ fn run_backup_inner(
         return Err("没有可备份的内容（请检查勾选与路径）".into());
     }
 
-    let dest_ids: Vec<&str> = enabled_dests.iter().map(|d| d.id()).collect();
+    let dest_ids: Vec<&str> = enabled_dests.iter().map(|d| d.id.as_str()).collect();
     if trigger == "schedule" {
         let history = load_history(50, false).unwrap_or_default();
         if let Some(base) =
@@ -384,30 +376,22 @@ fn run_backup_inner(
             "uploading",
             i as u32 + 1,
             dest_total as u32,
-            &format!("写入目标 {}", dest.name()),
+            &format!("写入目标 {}", dest.name),
             (0, 0),
             percent.round() as u32,
         );
-        let outcome = match dest {
-            Destination::Local { local, .. } => {
-                let target = local_target(&local.root_path, &hostname, &timestamp);
-                write_to_local(&target, &packed)
-            }
-            Destination::S3 { s3, .. } => {
-                crate::s3::upload_archives(s3, &hostname, &timestamp, &packed)
-            }
-        };
+        let outcome = dest.target().write_archives(&hostname, &timestamp, &packed);
         let (status, error, uri) = match outcome {
             Ok(uri) => (Status::Ok, None, Some(uri)),
             Err(e) => {
-                log::error!("destination {} failed: {e}", dest.name());
+                log::error!("destination {} failed: {e}", dest.name);
                 (Status::Failed, Some(e), None)
             }
         };
         dest_results.push(DestResult {
-            id: dest.id().to_string(),
+            id: dest.id.clone(),
             dest_type: dest.dest_type().to_string(),
-            name: dest.name().to_string(),
+            name: dest.name.clone(),
             status,
             error,
             uri,
@@ -423,18 +407,8 @@ fn run_backup_inner(
         if res.status != Status::Ok {
             continue;
         }
-        let written = match dest {
-            Destination::Local { local, .. } => fs::write(
-                local_target(&local.root_path, &hostname, &timestamp).join("manifest.json"),
-                &manifest_bytes,
-            )
-            .map_err(|e| e.to_string()),
-            Destination::S3 { s3, .. } => {
-                crate::s3::upload_manifest(s3, &hostname, &timestamp, &manifest_bytes)
-            }
-        };
-        if let Err(e) = written {
-            log::warn!("write manifest to {} failed: {e}", dest.name());
+        if let Err(e) = dest.target().write_manifest(&hostname, &timestamp, &manifest_bytes) {
+            log::warn!("write manifest to {} failed: {e}", dest.name);
         }
     }
 
@@ -514,27 +488,6 @@ fn unchanged_baseline<'h>(
                 .is_some_and(|u| Path::new(u).join("manifest.json").exists())
         });
     local_copies_present.then_some(base)
-}
-
-/// Copies into `<target>.partial` and renames when complete, so an interrupted
-/// copy never looks like a finished backup.
-fn write_to_local(target: &Path, packed: &[PackedSource]) -> Result<String, String> {
-    let mut partial_name = target.file_name().unwrap_or_default().to_os_string();
-    partial_name.push(".partial");
-    let partial = target.with_file_name(partial_name);
-    let copy_all = || -> Result<(), String> {
-        fs::create_dir_all(&partial).map_err(|e| format!("创建目标目录失败: {e}"))?;
-        for p in packed.iter().filter(|p| p.status == Status::Ok) {
-            fs::copy(&p.archive_path, partial.join(&p.archive_name))
-                .map_err(|e| format!("复制 {} 失败: {e}", p.archive_name))?;
-        }
-        fs::rename(&partial, target).map_err(|e| format!("完成目标目录失败: {e}"))
-    };
-    if let Err(e) = copy_all() {
-        let _ = fs::remove_dir_all(&partial);
-        return Err(e);
-    }
-    Ok(target.to_string_lossy().to_string())
 }
 
 struct Summary {
@@ -728,26 +681,5 @@ mod tests {
         fs::remove_file(copy.join("manifest.json")).unwrap();
         assert!(!check(&cfg, &same, &["d1"], &history), "local copy deleted");
         let _ = fs::remove_dir_all(&copy);
-    }
-
-    #[test]
-    fn local_write_is_all_or_nothing() {
-        let work = temp_dir("work");
-        fs::write(work.join("a.zip"), "a").unwrap();
-        let mut ok = packed("a", "x");
-        ok.archive_path = work.join("a.zip");
-        let mut missing = packed("b", "y");
-        missing.archive_path = work.join("missing.zip");
-
-        let dest = temp_dir("dest");
-        let target = dest.join("2026-10-23T120000Z");
-        assert!(write_to_local(&target, &[ok.clone(), missing]).is_err());
-        assert_eq!(fs::read_dir(&dest).unwrap().count(), 0, "no partial or final dir left");
-
-        write_to_local(&target, &[ok]).unwrap();
-        assert!(target.join("a.zip").exists());
-        assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);
-        let _ = fs::remove_dir_all(&work);
-        let _ = fs::remove_dir_all(&dest);
     }
 }

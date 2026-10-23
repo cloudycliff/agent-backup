@@ -1,6 +1,7 @@
 use crate::backup::{run_backup_with_app, Status};
 use crate::config::{
-    ensure_agent_defaults, resolve_hostname, AppConfig, Destination, LocalDestination,
+    ensure_agent_defaults, resolve_hostname, AppConfig, Destination, DestinationKind,
+    LocalDestination,
 };
 use crate::presets::load_presets;
 use std::fs;
@@ -23,12 +24,14 @@ fn presets_parse_and_backup_local() {
     let dest = std::env::temp_dir().join("agent-backup-smoke-dest");
     let _ = fs::remove_dir_all(&dest);
     fs::create_dir_all(&dest).unwrap();
-    cfg.destinations.push(Destination::Local {
+    cfg.destinations.push(Destination {
         id: "dest_test".into(),
         name: "tmp".into(),
         enabled: true,
-        local: LocalDestination {
-            root_path: dest.to_string_lossy().into(),
+        kind: DestinationKind::Local {
+            local: LocalDestination {
+                root_path: dest.to_string_lossy().into(),
+            },
         },
     });
 

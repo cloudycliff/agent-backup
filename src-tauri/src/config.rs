@@ -66,49 +66,28 @@ pub struct CustomSource {
     pub enabled: bool,
 }
 
+/// Serialized flat: `{"id", "name", "enabled", "type": "local", "local": {...}}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Destination {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub kind: DestinationKind,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Destination {
-    Local {
-        id: String,
-        name: String,
-        enabled: bool,
-        local: LocalDestination,
-    },
-    S3 {
-        id: String,
-        name: String,
-        enabled: bool,
-        s3: S3Destination,
-    },
+pub enum DestinationKind {
+    Local { local: LocalDestination },
+    S3 { s3: S3Destination },
 }
 
 impl Destination {
-    pub fn id(&self) -> &str {
-        match self {
-            Destination::Local { id, .. } => id,
-            Destination::S3 { id, .. } => id,
-        }
-    }
-
-    pub fn name(&self) -> &str {
-        match self {
-            Destination::Local { name, .. } => name,
-            Destination::S3 { name, .. } => name,
-        }
-    }
-
-    pub fn enabled(&self) -> bool {
-        match self {
-            Destination::Local { enabled, .. } => *enabled,
-            Destination::S3 { enabled, .. } => *enabled,
-        }
-    }
-
     pub fn dest_type(&self) -> &'static str {
-        match self {
-            Destination::Local { .. } => "local",
-            Destination::S3 { .. } => "s3",
+        match self.kind {
+            DestinationKind::Local { .. } => "local",
+            DestinationKind::S3 { .. } => "s3",
         }
     }
 }
@@ -378,6 +357,17 @@ mod tests {
         assert!(cfg.encryption.enabled);
         assert!(cfg.sources.agents["cursor"].enabled);
         assert!(!cfg.exclusions.file_name_globs.is_empty());
+    }
+
+    #[test]
+    fn destinations_keep_their_flat_json_shape() {
+        let raw = r#"[{"type":"local","id":"d1","name":"Disk","enabled":true,"local":{"root_path":"D:\\bk"}},{"type":"s3","id":"d2","name":"R2","enabled":false,"s3":{"endpoint":"https://x","region":"auto","bucket":"b","prefix":"","access_key":"ak","secret_key":"sk"}}]"#;
+        let dests: Vec<Destination> = serde_json::from_str(raw).unwrap();
+        assert!(matches!(&dests[0].kind, DestinationKind::Local { local } if local.root_path == "D:\\bk"));
+        assert!(matches!(&dests[1].kind, DestinationKind::S3 { s3 } if s3.bucket == "b"));
+        assert!(!dests[1].enabled);
+        let round: serde_json::Value = serde_json::to_value(&dests).unwrap();
+        assert_eq!(round, serde_json::from_str::<serde_json::Value>(raw).unwrap());
     }
 
     #[test]

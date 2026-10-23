@@ -8,7 +8,8 @@ use crate::history::HistoryEntry;
 use crate::scheduler::NextRun;
 use crate::config::{
     config_dir, config_path, ensure_agent_defaults, load_config, open_path_in_explorer, save_config,
-    user_presets_path, AppConfig, CustomSource, Destination, LocalDestination, S3Destination,
+    user_presets_path, AppConfig, CustomSource, Destination, DestinationKind, LocalDestination,
+    S3Destination,
 };
 use crate::presets::{
     load_presets, reset_user_presets, write_user_presets_template_if_missing, ResolvedAgent,
@@ -108,18 +109,28 @@ pub fn save_app_config(config: AppConfig) -> Result<BootstrapState, String> {
 #[tauri::command]
 pub fn add_local_destination(name: String, root_path: String) -> Result<BootstrapState, String> {
     let mut cfg = load_config()?;
-    cfg.destinations.push(Destination::Local {
+    cfg.destinations.push(new_destination(
+        name,
+        "本地目录",
+        DestinationKind::Local {
+            local: LocalDestination { root_path },
+        },
+    ));
+    save_config(&cfg)?;
+    get_bootstrap()
+}
+
+fn new_destination(name: String, default_name: &str, kind: DestinationKind) -> Destination {
+    Destination {
         id: new_destination_id(),
         name: if name.trim().is_empty() {
-            "本地目录".into()
+            default_name.into()
         } else {
             name
         },
         enabled: true,
-        local: LocalDestination { root_path },
-    });
-    save_config(&cfg)?;
-    get_bootstrap()
+        kind,
+    }
 }
 
 #[tauri::command]
@@ -139,23 +150,20 @@ pub fn add_s3_destination(
         return Err("Access Key / Secret Key 必填".into());
     }
     let mut cfg = load_config()?;
-    cfg.destinations.push(Destination::S3 {
-        id: new_destination_id(),
-        name: if name.trim().is_empty() {
-            "S3".into()
-        } else {
-            name
+    cfg.destinations.push(new_destination(
+        name,
+        "S3",
+        DestinationKind::S3 {
+            s3: S3Destination {
+                endpoint,
+                region,
+                bucket,
+                prefix,
+                access_key,
+                secret_key,
+            },
         },
-        enabled: true,
-        s3: S3Destination {
-            endpoint,
-            region,
-            bucket,
-            prefix,
-            access_key,
-            secret_key,
-        },
-    });
+    ));
     save_config(&cfg)?;
     get_bootstrap()
 }
@@ -187,8 +195,8 @@ pub async fn test_s3_destination(
             Some(id) if secret_key.trim().is_empty() => load_config()?
                 .destinations
                 .into_iter()
-                .find_map(|d| match d {
-                    Destination::S3 { id: d_id, s3, .. } if d_id == id => Some(s3.secret_key),
+                .find_map(|d| match d.kind {
+                    DestinationKind::S3 { s3 } if d.id == id => Some(s3.secret_key),
                     _ => None,
                 })
                 .unwrap_or_default(),
@@ -213,7 +221,7 @@ fn new_destination_id() -> String {
 fn find_destination<'a>(cfg: &'a mut AppConfig, id: &str) -> Result<&'a mut Destination, String> {
     cfg.destinations
         .iter_mut()
-        .find(|d| d.id() == id)
+        .find(|d| d.id == id)
         .ok_or_else(|| "目标不存在".to_string())
 }
 
@@ -229,21 +237,16 @@ pub fn update_local_destination(
         return Err("目录不能为空".into());
     }
     let mut cfg = load_config()?;
-    let Destination::Local {
-        id: dest_id,
-        name: dest_name,
-        local,
-        ..
-    } = find_destination(&mut cfg, &id)?
-    else {
+    let dest = find_destination(&mut cfg, &id)?;
+    let DestinationKind::Local { local } = &mut dest.kind else {
         return Err("该目标不是本地目录".into());
     };
     if local.root_path != root_path {
-        *dest_id = new_destination_id();
         local.root_path = root_path;
+        dest.id = new_destination_id();
     }
     if !name.trim().is_empty() {
-        *dest_name = name;
+        dest.name = name;
     }
     save_config(&cfg)?;
     get_bootstrap()
@@ -268,21 +271,13 @@ pub fn update_s3_destination(
         return Err("Access Key 必填".into());
     }
     let mut cfg = load_config()?;
-    let Destination::S3 {
-        id: dest_id,
-        name: dest_name,
-        s3,
-        ..
-    } = find_destination(&mut cfg, &id)?
-    else {
+    let dest = find_destination(&mut cfg, &id)?;
+    let DestinationKind::S3 { s3 } = &mut dest.kind else {
         return Err("该目标不是 S3".into());
     };
     let moved = s3.endpoint.trim() != endpoint.trim()
         || s3.bucket.trim() != bucket.trim()
         || s3.prefix.trim().trim_matches('/') != prefix.trim().trim_matches('/');
-    if moved {
-        *dest_id = new_destination_id();
-    }
     s3.endpoint = endpoint;
     s3.region = region;
     s3.bucket = bucket;
@@ -291,8 +286,11 @@ pub fn update_s3_destination(
     if !secret_key.trim().is_empty() {
         s3.secret_key = secret_key;
     }
+    if moved {
+        dest.id = new_destination_id();
+    }
     if !name.trim().is_empty() {
-        *dest_name = name;
+        dest.name = name;
     }
     save_config(&cfg)?;
     get_bootstrap()
@@ -333,7 +331,7 @@ pub fn reset_exclusions() -> Result<BootstrapState, String> {
 #[tauri::command]
 pub fn remove_destination(id: String) -> Result<BootstrapState, String> {
     let mut cfg = load_config()?;
-    cfg.destinations.retain(|d| d.id() != id);
+    cfg.destinations.retain(|d| d.id != id);
     save_config(&cfg)?;
     get_bootstrap()
 }
@@ -341,14 +339,7 @@ pub fn remove_destination(id: String) -> Result<BootstrapState, String> {
 #[tauri::command]
 pub fn set_destination_enabled(id: String, enabled: bool) -> Result<BootstrapState, String> {
     let mut cfg = load_config()?;
-    for dest in &mut cfg.destinations {
-        if dest.id() == id {
-            match dest {
-                Destination::Local { enabled: e, .. } => *e = enabled,
-                Destination::S3 { enabled: e, .. } => *e = enabled,
-            }
-        }
-    }
+    find_destination(&mut cfg, &id)?.enabled = enabled;
     save_config(&cfg)?;
     get_bootstrap()
 }
@@ -510,10 +501,7 @@ pub fn open_path(path: String) -> Result<(), String> {
     let mut allowed: Vec<PathBuf> = cfg
         .destinations
         .iter()
-        .filter_map(|d| match d {
-            Destination::Local { local, .. } => Some(PathBuf::from(&local.root_path)),
-            Destination::S3 { .. } => None,
-        })
+        .filter_map(|d| d.target().output_dir())
         .collect();
     allowed.push(config_dir()?);
     let path = PathBuf::from(path);
