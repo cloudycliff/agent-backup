@@ -41,6 +41,7 @@ export default function App() {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const [appVersion, setAppVersion] = useState("");
   const lang = boot?.language ?? browserLang();
   const t = translator(lang);
 
@@ -77,6 +78,7 @@ export default function App() {
     invoke<Bootstrap>("get_bootstrap")
       .then(setBoot)
       .catch((e) => setError(String(e)));
+    invoke<string>("get_app_version").then(setAppVersion).catch(() => undefined);
     refreshAfterRun().catch(() => undefined);
     (async () => {
       if (!(await isPermissionGranted())) await requestPermission();
@@ -152,7 +154,10 @@ export default function App() {
       <div className="shell">
         <header className="top">
           <div>
-            <h1>Agent Backup</h1>
+            <h1>
+              Agent Backup
+              {appVersion && <span className="app-version">v{appVersion}</span>}
+            </h1>
             <p className="muted">
               {t("app.host")} <code>{boot.hostname}</code> · {t("app.oneWay")}
             </p>
@@ -221,7 +226,9 @@ export default function App() {
             onError={setError}
           />
         )}
-        {tab === "settings" && <SettingsTab boot={boot} withRefresh={withRefresh} />}
+        {tab === "settings" && (
+          <SettingsTab boot={boot} version={appVersion} withRefresh={withRefresh} />
+        )}
       </div>
     </I18nProvider>
   );

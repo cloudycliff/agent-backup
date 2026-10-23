@@ -3,23 +3,43 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useI18n, withCode } from "../i18n";
 import type { Bootstrap, WithRefresh } from "../types";
+import {
+  fetchLatestRelease,
+  isNewer,
+  RELEASES_URL,
+  REPO_URL,
+  type LatestRelease,
+} from "../update";
 
 type Props = { boot: Bootstrap; withRefresh: WithRefresh };
 
-const REPO_URL = "https://github.com/cloudycliff/agent-backup";
+type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "latest" }
+  | { kind: "available"; release: LatestRelease }
+  | { kind: "error"; message: string };
 
-export default function SettingsTab({ boot, withRefresh }: Props) {
+export default function SettingsTab({ boot, version, withRefresh }: Props & { version: string }) {
   const { t } = useI18n();
   const { config } = boot;
   const [passwordDraft, setPasswordDraft] = useState("");
   const [hostnameDraft, setHostnameDraft] = useState(config.app.hostname_override ?? "");
   const [scheduleTime, setScheduleTime] = useState(config.schedule.time_local || "21:00");
   const [docs, setDocs] = useState("");
-  const [version, setVersion] = useState("");
+  const [update, setUpdate] = useState<UpdateState>({ kind: "idle" });
 
-  useEffect(() => {
-    invoke<string>("get_app_version").then(setVersion).catch(() => undefined);
-  }, []);
+  const checkUpdate = async () => {
+    setUpdate({ kind: "checking" });
+    try {
+      const release = await fetchLatestRelease();
+      setUpdate(
+        isNewer(release.version, version) ? { kind: "available", release } : { kind: "latest" },
+      );
+    } catch (e) {
+      setUpdate({ kind: "error", message: String(e) });
+    }
+  };
 
   useEffect(() => {
     invoke<string>("get_docs_hint").then(setDocs).catch(() => undefined);
@@ -168,6 +188,32 @@ export default function SettingsTab({ boot, withRefresh }: Props) {
               {t("settings.github")}
             </a>
           </p>
+          <div className="row-gap" style={{ marginTop: 8 }}>
+            {update.kind === "available" ? (
+              <button className="primary" onClick={() => openUrl(update.release.url)}>
+                {t("settings.downloadUpdate", { version: update.release.version })}
+              </button>
+            ) : (
+              <button disabled={update.kind === "checking" || !version} onClick={checkUpdate}>
+                {update.kind === "checking" ? t("settings.checkingUpdate") : t("settings.checkUpdate")}
+              </button>
+            )}
+            {update.kind === "latest" && <span className="muted">{t("settings.upToDate")}</span>}
+            {update.kind === "error" && (
+              <span className="muted">
+                {t("settings.updateFailed", { error: update.message })}{" "}
+                <a
+                  href={RELEASES_URL}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    openUrl(RELEASES_URL);
+                  }}
+                >
+                  {t("settings.openReleases")}
+                </a>
+              </span>
+            )}
+          </div>
 
           <hr className="sep" />
 

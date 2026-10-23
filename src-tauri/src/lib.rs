@@ -48,6 +48,7 @@ pub fn run() {
             tray::build(app)?;
 
             if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&format!("Agent Backup v{}", env!("CARGO_PKG_VERSION")));
                 let window_clone = window.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
