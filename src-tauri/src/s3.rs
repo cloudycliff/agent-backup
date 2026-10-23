@@ -1,5 +1,6 @@
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::{BehaviorVersion, Region};
+use aws_sdk_s3::error::DisplayErrorContext;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client;
 
@@ -63,16 +64,30 @@ where
     tauri::async_runtime::block_on(f)
 }
 
+fn describe<E: std::error::Error>(e: E) -> String {
+    DisplayErrorContext(e).to_string()
+}
+
+/// Uploads a small object under the prefix, which is exactly what a backup needs,
+/// so keys limited to PutObject pass. Deleting it afterwards is best effort.
 pub fn test_connection(s3: &S3Destination) -> Result<String, String> {
     with_runtime(async {
         let client = build_client(s3)?;
+        let bucket = s3.bucket.trim();
+        let key = join_key(&s3.prefix, &[".agent-backup-write-test"]);
         client
-            .head_bucket()
-            .bucket(s3.bucket.trim())
+            .put_object()
+            .bucket(bucket)
+            .key(&key)
+            .body(ByteStream::from_static(b"agent-backup write test"))
             .send()
             .await
-            .map_err(|e| format!("连接失败: {e}"))?;
-        Ok(format!("连接成功：bucket `{}`", s3.bucket.trim()))
+            .map_err(|e| format!("写入测试失败: {}", describe(e)))?;
+        let mut msg = format!("写入测试成功：s3://{bucket}/{key}");
+        if client.delete_object().bucket(bucket).key(&key).send().await.is_err() {
+            msg.push_str("（测试文件未能删除，可手动删除；只有上传权限也能正常备份）");
+        }
+        Ok(msg)
     })
 }
 
@@ -100,7 +115,7 @@ pub fn upload_archives(
                 .content_type("application/zip")
                 .send()
                 .await
-                .map_err(|e| format!("上传 {} 失败: {e}", p.archive_name))?;
+                .map_err(|e| format!("上传 {} 失败: {}", p.archive_name, describe(e)))?;
         }
 
         Ok(format!("s3://{bucket}/{base}"))
@@ -128,7 +143,7 @@ pub fn upload_manifest(
             .content_type("application/json")
             .send()
             .await
-            .map_err(|e| format!("上传 manifest 失败: {e}"))?;
+            .map_err(|e| format!("上传 manifest 失败: {}", describe(e)))?;
         Ok(())
     })
 }

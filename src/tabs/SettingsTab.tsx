@@ -114,6 +114,8 @@ export default function SettingsTab({ boot, withRefresh }: Props) {
           <p className="path">当前使用：{boot.hostname}</p>
         </div>
 
+        <ExclusionsCard boot={boot} withRefresh={withRefresh} />
+
         <div className="card">
           <h3>应用</h3>
           <label className="check">
@@ -153,5 +155,57 @@ export default function SettingsTab({ boot, withRefresh }: Props) {
         </div>
       </div>
     </section>
+  );
+}
+
+const toLines = (list: string[]) => list.join("\n");
+const fromLines = (text: string) => text.split(/\r?\n/);
+
+function ExclusionsCard({ boot, withRefresh }: Props) {
+  const savedFiles = toLines(boot.config.exclusions.file_name_globs);
+  const savedDirs = toLines(boot.config.exclusions.dir_name_globs);
+  const [files, setFiles] = useState(savedFiles);
+  const [dirs, setDirs] = useState(savedDirs);
+
+  useEffect(() => {
+    setFiles(savedFiles);
+    setDirs(savedDirs);
+  }, [savedFiles, savedDirs]);
+
+  return (
+    <div className="card">
+      <h3>排除规则</h3>
+      <p className="muted">
+        对所有源生效，每行一条，支持 <code>*</code> 通配。文件规则匹配文件名或相对路径，不含 <code>/</code> 的文件规则也会排除同名目录；目录规则匹配目录名，命中后整个目录跳过。各 Agent 预设里的排除项另外生效。
+      </p>
+      <div className="form-grid">
+        <label className="field">
+          <span>文件</span>
+          <textarea rows={7} value={files} onChange={(e) => setFiles(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>目录</span>
+          <textarea rows={7} value={dirs} onChange={(e) => setDirs(e.target.value)} />
+        </label>
+      </div>
+      <div className="row-gap" style={{ marginTop: 10 }}>
+        <button
+          className="primary"
+          onClick={() =>
+            withRefresh(() =>
+              invoke("update_exclusions", {
+                fileNameGlobs: fromLines(files),
+                dirNameGlobs: fromLines(dirs),
+              }),
+            )
+          }
+        >
+          保存规则
+        </button>
+        <button onClick={() => withRefresh(() => invoke("reset_exclusions"))}>
+          恢复默认
+        </button>
+      </div>
+    </div>
   );
 }

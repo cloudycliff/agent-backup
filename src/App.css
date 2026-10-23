@@ -241,7 +241,8 @@ button.danger {
 
 input[type="text"],
 input[type="password"],
-input[type="time"] {
+input[type="time"],
+textarea {
   border: 1px solid #c9ddd3;
   border-radius: 10px;
   padding: 8px 10px;
@@ -278,9 +279,16 @@ input[type="time"] {
   font-size: 0.9rem;
 }
 
-.field input {
+.field input,
+.field textarea {
   width: 100%;
   min-width: 0;
+}
+
+textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  resize: vertical;
 }
 
 .status-line {

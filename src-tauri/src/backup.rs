@@ -155,10 +155,8 @@ fn encryption_password(cfg: &AppConfig) -> Result<Option<String>, String> {
     let pw = cfg
         .encryption
         .password
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+        .clone()
+        .filter(|s| !s.trim().is_empty());
     if pw.is_none() {
         return Err("已开启加密，请先在设置中设置密码".into());
     }

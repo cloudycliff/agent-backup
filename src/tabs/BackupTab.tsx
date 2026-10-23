@@ -32,6 +32,8 @@ export default function BackupTab({
   onBackup,
 }: Props) {
   const enabledDestCount = boot.config.destinations.filter((d) => d.enabled).length;
+  const missingPassword =
+    boot.config.encryption.enabled && !boot.config.encryption.password;
 
   async function addCustomSource() {
     const selected = await open({ directory: true, multiple: false });
@@ -49,7 +51,7 @@ export default function BackupTab({
         </div>
         <button
           className="primary"
-          disabled={busy || enabledDestCount === 0}
+          disabled={busy || enabledDestCount === 0 || missingPassword}
           onClick={onBackup}
         >
           {busy ? "备份中…" : "立即备份"}
@@ -58,7 +60,7 @@ export default function BackupTab({
       {enabledDestCount === 0 && (
         <p className="hint">尚未配置目标。请先到「目标」添加一个本地目录。</p>
       )}
-      {boot.config.encryption.enabled && !boot.config.encryption.password && (
+      {missingPassword && (
         <p className="hint">已开启加密但未设置密码。请到「设置」填写密码后再备份。</p>
       )}
       {status && <StatusLine status={status} />}
@@ -85,10 +87,24 @@ export default function BackupTab({
         <ul className="list">
           {boot.config.sources.custom.map((c) => (
             <li key={c.id}>
-              <div>
-                <strong>{c.label}</strong>
-                <div className="path">{c.path}</div>
-              </div>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={c.enabled}
+                  onChange={(e) =>
+                    withRefresh(() =>
+                      invoke("set_custom_source_enabled", {
+                        id: c.id,
+                        enabled: e.target.checked,
+                      }),
+                    )
+                  }
+                />
+                <div>
+                  <strong>{c.label}</strong>
+                  <div className="path">{c.path}</div>
+                </div>
+              </label>
               <button
                 className="danger"
                 onClick={() =>

@@ -103,9 +103,13 @@
 - `destinations[]`：支持 `local`（本地目录）与 `s3`（S3 兼容：R2 / MinIO / AWS 等）
 - 本地目标写入：`{root_path}/backups/{hostname}/{timestamp}/`
 - S3 目标写入：`s3://{bucket}/{prefix}/backups/{hostname}/{timestamp}/`（path-style）
+- S3"测试写入"会在 `{prefix}/` 下上传一个 `.agent-backup-write-test` 小文件再尝试删除，只有上传权限（PutObject）的密钥也能通过；没有删除权限时测试文件会留下，可手动删除
+- 目标可在界面编辑：改名不影响历史；更换本地目录或 S3 的 Endpoint / Bucket / Prefix 视为新目标，下次定时备份即使内容没变也会完整写入新位置。编辑 S3 时 Secret Key 留空表示不修改
+- `exclusions.file_name_globs` / `exclusions.dir_name_globs`：全局排除规则，可在设置页编辑（每行一条，保存时校验语法并去重），也可一键恢复默认
 - 多目标尽力而为：一个失败不影响其他已成功目标
 - `encryption.enabled` 默认 `true`；开启时 zip 使用 **AES-256** 密码保护（WinRAR / 7-Zip 等可解压）
-- 密码明文保存在 `config.json`（按产品决策）
+- 密码明文保存在 `config.json`（按产品决策）；首尾空格属于密码的一部分。开启加密但未设密码时不能开始备份
+- `sources.custom[].enabled`：自定义源可在界面单独开关，关闭后保留配置但不备份
 - `schedule.enabled` + `schedule.time_local`（本地 `HH:mm`）：托盘常驻时每日到点备份；错过的时间点（睡眠、关机、应用未运行）会在下次运行时补跑一次，不会累计补多次
 - 配置文件采用"写临时文件再改名"的方式保存；缺失的字段按默认值补齐，旧版配置可直接使用
 - `app.start_on_login`：登录时启动

@@ -42,6 +42,7 @@ export type AppConfig = {
   };
   encryption: { enabled: boolean; password: string | null };
   schedule: { enabled: boolean; time_local: string };
+  exclusions: { file_name_globs: string[]; dir_name_globs: string[] };
   app: {
     hostname_override: string | null;
     start_on_login: boolean;

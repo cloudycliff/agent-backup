@@ -109,7 +109,7 @@ pub fn save_app_config(config: AppConfig) -> Result<BootstrapState, String> {
 pub fn add_local_destination(name: String, root_path: String) -> Result<BootstrapState, String> {
     let mut cfg = load_config()?;
     cfg.destinations.push(Destination::Local {
-        id: format!("dest_{}", uuid::Uuid::new_v4()),
+        id: new_destination_id(),
         name: if name.trim().is_empty() {
             "本地目录".into()
         } else {
@@ -140,7 +140,7 @@ pub fn add_s3_destination(
     }
     let mut cfg = load_config()?;
     cfg.destinations.push(Destination::S3 {
-        id: format!("dest_{}", uuid::Uuid::new_v4()),
+        id: new_destination_id(),
         name: if name.trim().is_empty() {
             "S3".into()
         } else {
@@ -170,8 +170,11 @@ where
         .map_err(|e| format!("后台任务异常: {e}"))?
 }
 
+/// `id` lets the edit form test without retyping the secret: an empty secret key
+/// falls back to the one stored for that destination.
 #[tauri::command]
 pub async fn test_s3_destination(
+    id: Option<String>,
     endpoint: String,
     region: String,
     bucket: String,
@@ -179,18 +182,152 @@ pub async fn test_s3_destination(
     access_key: String,
     secret_key: String,
 ) -> Result<String, String> {
-    let _ = prefix;
     run_blocking(move || {
+        let secret_key = match id {
+            Some(id) if secret_key.trim().is_empty() => load_config()?
+                .destinations
+                .into_iter()
+                .find_map(|d| match d {
+                    Destination::S3 { id: d_id, s3, .. } if d_id == id => Some(s3.secret_key),
+                    _ => None,
+                })
+                .unwrap_or_default(),
+            _ => secret_key,
+        };
         crate::s3::test_connection(&S3Destination {
             endpoint,
             region,
             bucket,
-            prefix: String::new(),
+            prefix,
             access_key,
             secret_key,
         })
     })
     .await
+}
+
+fn new_destination_id() -> String {
+    format!("dest_{}", uuid::Uuid::new_v4())
+}
+
+fn find_destination<'a>(cfg: &'a mut AppConfig, id: &str) -> Result<&'a mut Destination, String> {
+    cfg.destinations
+        .iter_mut()
+        .find(|d| d.id() == id)
+        .ok_or_else(|| "目标不存在".to_string())
+}
+
+/// A destination whose location changes gets a new id, so history never treats
+/// copies at the old location as present at the new one.
+#[tauri::command]
+pub fn update_local_destination(
+    id: String,
+    name: String,
+    root_path: String,
+) -> Result<BootstrapState, String> {
+    if root_path.trim().is_empty() {
+        return Err("目录不能为空".into());
+    }
+    let mut cfg = load_config()?;
+    let Destination::Local {
+        id: dest_id,
+        name: dest_name,
+        local,
+        ..
+    } = find_destination(&mut cfg, &id)?
+    else {
+        return Err("该目标不是本地目录".into());
+    };
+    if local.root_path != root_path {
+        *dest_id = new_destination_id();
+        local.root_path = root_path;
+    }
+    if !name.trim().is_empty() {
+        *dest_name = name;
+    }
+    save_config(&cfg)?;
+    get_bootstrap()
+}
+
+/// Same rules as `add_s3_destination`; an empty secret key keeps the stored one.
+#[tauri::command]
+pub fn update_s3_destination(
+    id: String,
+    name: String,
+    endpoint: String,
+    region: String,
+    bucket: String,
+    prefix: String,
+    access_key: String,
+    secret_key: String,
+) -> Result<BootstrapState, String> {
+    if endpoint.trim().is_empty() || bucket.trim().is_empty() {
+        return Err("Endpoint 与 Bucket 必填".into());
+    }
+    if access_key.trim().is_empty() {
+        return Err("Access Key 必填".into());
+    }
+    let mut cfg = load_config()?;
+    let Destination::S3 {
+        id: dest_id,
+        name: dest_name,
+        s3,
+        ..
+    } = find_destination(&mut cfg, &id)?
+    else {
+        return Err("该目标不是 S3".into());
+    };
+    let moved = s3.endpoint.trim() != endpoint.trim()
+        || s3.bucket.trim() != bucket.trim()
+        || s3.prefix.trim().trim_matches('/') != prefix.trim().trim_matches('/');
+    if moved {
+        *dest_id = new_destination_id();
+    }
+    s3.endpoint = endpoint;
+    s3.region = region;
+    s3.bucket = bucket;
+    s3.prefix = prefix;
+    s3.access_key = access_key;
+    if !secret_key.trim().is_empty() {
+        s3.secret_key = secret_key;
+    }
+    if !name.trim().is_empty() {
+        *dest_name = name;
+    }
+    save_config(&cfg)?;
+    get_bootstrap()
+}
+
+#[tauri::command]
+pub fn update_exclusions(
+    file_name_globs: Vec<String>,
+    dir_name_globs: Vec<String>,
+) -> Result<BootstrapState, String> {
+    let mut cfg = load_config()?;
+    cfg.exclusions.file_name_globs = normalize_globs(&file_name_globs)?;
+    cfg.exclusions.dir_name_globs = normalize_globs(&dir_name_globs)?;
+    save_config(&cfg)?;
+    get_bootstrap()
+}
+
+/// Trims, drops blanks and duplicates, and rejects patterns globset can't parse.
+fn normalize_globs(list: &[String]) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for pattern in list.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+        globset::Glob::new(pattern).map_err(|e| format!("规则 `{pattern}` 无效: {e}"))?;
+        if !out.iter().any(|p| p == pattern) {
+            out.push(pattern.to_string());
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn reset_exclusions() -> Result<BootstrapState, String> {
+    let mut cfg = load_config()?;
+    cfg.exclusions = Default::default();
+    save_config(&cfg)?;
+    get_bootstrap()
 }
 
 #[tauri::command]
@@ -232,6 +369,20 @@ pub fn add_custom_source(label: String, path: String) -> Result<BootstrapState, 
         path,
         enabled: true,
     });
+    save_config(&cfg)?;
+    get_bootstrap()
+}
+
+#[tauri::command]
+pub fn set_custom_source_enabled(id: String, enabled: bool) -> Result<BootstrapState, String> {
+    let mut cfg = load_config()?;
+    let source = cfg
+        .sources
+        .custom
+        .iter_mut()
+        .find(|c| c.id == id)
+        .ok_or_else(|| "自定义源不存在".to_string())?;
+    source.enabled = enabled;
     save_config(&cfg)?;
     get_bootstrap()
 }
@@ -369,22 +520,10 @@ pub fn update_encryption(
     let mut cfg = load_config()?;
     cfg.encryption.enabled = enabled;
     if let Some(pw) = password {
-        let trimmed = pw.trim().to_string();
-        cfg.encryption.password = if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        };
+        // Spaces are part of the password; only an all-blank entry clears it.
+        cfg.encryption.password = Some(pw).filter(|p| !p.trim().is_empty());
     }
-    if cfg.encryption.enabled
-        && cfg
-            .encryption
-            .password
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .is_none()
-    {
+    if cfg.encryption.enabled && cfg.encryption.password.is_none() {
         return Err("开启加密时必须设置密码".into());
     }
     save_config(&cfg)?;
@@ -452,6 +591,7 @@ mod tests {
     #[test]
     fn s3_call_inside_blocking_task_returns_error_instead_of_panicking() {
         let result = tauri::async_runtime::block_on(test_s3_destination(
+            None,
             "http://127.0.0.1:9".into(),
             "auto".into(),
             "bucket".into(),
@@ -460,6 +600,14 @@ mod tests {
             "sk".into(),
         ));
         let err = result.expect_err("unreachable endpoint must fail");
-        assert!(err.contains("连接失败"), "{err}");
+        assert!(err.contains("写入测试失败"), "{err}");
+    }
+
+    #[test]
+    fn exclusion_patterns_are_cleaned_and_validated() {
+        let input = [" *.pem ", "", "*.pem", "cache/"].map(String::from);
+        assert_eq!(normalize_globs(&input).unwrap(), vec!["*.pem", "cache/"]);
+        let err = normalize_globs(&["[unclosed".into()]).unwrap_err();
+        assert!(err.contains("[unclosed"), "{err}");
     }
 }
