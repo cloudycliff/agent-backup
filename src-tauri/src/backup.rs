@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, TryLockError};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, PoisonError, TryLockError};
+use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -24,6 +26,8 @@ const TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H%M%SZ";
 const PACK_PERCENT_SHARE: f64 = 90.0;
 const UPLOAD_PERCENT_SHARE: f64 = 9.0;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
+/// Compression is CPU-bound but sources share one disk; more workers mostly add contention.
+const MAX_PACK_WORKERS: usize = 4;
 /// A scheduled run with unchanged content still writes a fresh copy once the last
 /// full backup is this old, so deleted or damaged copies don't go unnoticed forever.
 const UNCHANGED_MAX_AGE: TimeDelta = TimeDelta::days(7);
@@ -228,19 +232,86 @@ fn plan_sources(cfg: &AppConfig) -> Result<Vec<SourcePlan>, String> {
             plans.push(plan_agent(agent, &groups, &cfg.exclusions, &skip_dirs));
         }
     }
+    let mut used_stems: BTreeSet<String> = plans.iter().map(|p| p.key.clone()).collect();
     for custom in cfg.sources.custom.iter().filter(|c| c.enabled) {
         let fallback = format!("custom-{}", &custom.id[..8.min(custom.id.len())]);
-        let slug = slugify_label(&custom.label, &fallback);
+        let stem = unique_stem(&mut used_stems, slugify_label(&custom.label, &fallback));
         plans.push(plan_custom(
             &custom.id,
             &custom.label,
             Path::new(&custom.path),
-            &slug,
+            &stem,
             &cfg.exclusions,
             &skip_dirs,
         ));
     }
     Ok(plans)
+}
+
+/// Archive file names must not collide: sources are packed concurrently into one directory.
+fn unique_stem(used: &mut BTreeSet<String>, base: String) -> String {
+    let mut stem = base.clone();
+    let mut n = 1;
+    while !used.insert(stem.clone()) {
+        n += 1;
+        stem = format!("{base}-{n}");
+    }
+    stem
+}
+
+/// Packs sources on a small worker pool. Results keep the plan order; also returns the raw bytes read.
+fn pack_sources(
+    app: Option<&AppHandle>,
+    plans: Vec<SourcePlan>,
+    work_dir: &Path,
+    timestamp: &str,
+    password: Option<&str>,
+) -> (Vec<PackedSource>, u64) {
+    let total = plans.len();
+    let raw_total: u64 = plans.iter().map(|p| p.bytes).sum();
+    let workers = thread::available_parallelism()
+        .map_or(1, |n| n.get())
+        .min(MAX_PACK_WORKERS)
+        .min(total)
+        .max(1);
+    let queue = Mutex::new(plans.into_iter().enumerate());
+    let slots: Mutex<Vec<Option<PackedSource>>> = Mutex::new((0..total).map(|_| None).collect());
+    let raw_done = AtomicU64::new(0);
+    let finished = AtomicUsize::new(0);
+    let throttle = Mutex::new(Throttle(None));
+    // Holding the throttle lock while emitting keeps byte counts monotonic across workers.
+    let report = |label: &str, force: bool| {
+        let mut throttle = throttle.lock().unwrap_or_else(PoisonError::into_inner);
+        if !throttle.ready() && !force {
+            return;
+        }
+        let done = raw_done.load(Ordering::Relaxed);
+        let current = (finished.load(Ordering::Relaxed) + 1).min(total) as u32;
+        emit_progress(app, "packing", current, total as u32, label, (done, raw_total), pack_percent(done, raw_total));
+    };
+    thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| loop {
+                let next = queue.lock().unwrap_or_else(PoisonError::into_inner).next();
+                let Some((i, plan)) = next else { break };
+                let label = format!("打包 {}", plan.label);
+                report(&label, true);
+                let packed = plan.pack(work_dir, timestamp, password, &mut |n| {
+                    raw_done.fetch_add(n, Ordering::Relaxed);
+                    report(&label, false);
+                });
+                finished.fetch_add(1, Ordering::Relaxed);
+                slots.lock().unwrap_or_else(PoisonError::into_inner)[i] = Some(packed);
+            });
+        }
+    });
+    let packed = slots
+        .into_inner()
+        .unwrap_or_else(PoisonError::into_inner)
+        .into_iter()
+        .map(|p| p.expect("every plan is packed"))
+        .collect();
+    (packed, raw_done.into_inner())
 }
 
 /// Canonical `backups/` directories of every local destination that has written one.
@@ -309,24 +380,7 @@ fn run_backup_inner(
     let work = WorkDir(std::env::temp_dir().join("agent-backup").join(&timestamp));
     fs::create_dir_all(&work.0).map_err(|e| e.to_string())?;
 
-    let pack_total = plans.len() as u32;
-    let mut packed: Vec<PackedSource> = Vec::with_capacity(plans.len());
-    let mut raw_done = 0u64;
-    let mut throttle = Throttle(None);
-    for (i, plan) in plans.into_iter().enumerate() {
-        let current = i as u32 + 1;
-        let label = format!("打包 {}", plan.label);
-        let report = |done: u64| {
-            emit_progress(app, "packing", current, pack_total, &label, (done, raw_total), pack_percent(done, raw_total));
-        };
-        report(raw_done);
-        packed.push(plan.pack(&work.0, &timestamp, password.as_deref(), &mut |n| {
-            raw_done += n;
-            if throttle.ready() {
-                report(raw_done);
-            }
-        }));
-    }
+    let (packed, raw_done) = pack_sources(app, plans, &work.0, &timestamp, password.as_deref());
 
     for p in &packed {
         match (&p.error, p.warnings.first()) {
@@ -641,6 +695,41 @@ mod tests {
                 ..Default::default()
             }],
         }
+    }
+
+    #[test]
+    fn archive_stems_are_made_unique() {
+        let mut used: BTreeSet<String> = ["cursor".to_string()].into();
+        assert_eq!(unique_stem(&mut used, "notes".into()), "notes");
+        assert_eq!(unique_stem(&mut used, "notes".into()), "notes-2");
+        assert_eq!(unique_stem(&mut used, "notes".into()), "notes-3");
+        assert_eq!(unique_stem(&mut used, "cursor".into()), "cursor-2");
+    }
+
+    #[test]
+    fn parallel_packing_keeps_plan_order() {
+        let root = temp_dir("parallel");
+        let work = root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        let exclusions = AppConfig::default().exclusions;
+        let plans: Vec<SourcePlan> = (0..7)
+            .map(|i| {
+                let src = root.join(format!("src{i}"));
+                fs::create_dir_all(&src).unwrap();
+                // Earlier sources are larger so they finish last when packed concurrently.
+                fs::write(src.join("data.txt"), "x".repeat((7 - i) * 50_000)).unwrap();
+                plan_custom(&format!("id{i}"), &format!("S{i}"), &src, &format!("s{i}"), &exclusions, &[])
+            })
+            .collect();
+        let raw_total: u64 = plans.iter().map(|p| p.bytes).sum();
+
+        let (packed, raw_done) = pack_sources(None, plans, &work, "T", None);
+
+        let keys: Vec<&str> = packed.iter().map(|p| p.key.as_str()).collect();
+        assert_eq!(keys, ["id0", "id1", "id2", "id3", "id4", "id5", "id6"]);
+        assert!(packed.iter().all(|p| p.status == Status::Ok && p.archive_path.is_file()));
+        assert_eq!(raw_done, raw_total);
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn at(s: &str) -> DateTime<Utc> {
