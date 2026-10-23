@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Bootstrap, WithRefresh } from "../types";
 
 type Props = { boot: Bootstrap; withRefresh: WithRefresh };
+
+const REPO_URL = "https://github.com/cloudycliff/agent-backup";
 
 export default function SettingsTab({ boot, withRefresh }: Props) {
   const { config } = boot;
@@ -133,7 +136,18 @@ export default function SettingsTab({ boot, withRefresh }: Props) {
           <p className="muted" style={{ marginTop: 8 }}>
             关闭窗口会最小化到托盘，以支持每日定时。
           </p>
-          <p className="muted">版本 {version}</p>
+          <p className="muted">
+            版本 {version} ·{" "}
+            <a
+              href={REPO_URL}
+              onClick={(e) => {
+                e.preventDefault();
+                openUrl(REPO_URL);
+              }}
+            >
+              GitHub 主页
+            </a>
+          </p>
 
           <hr className="sep" />
 
