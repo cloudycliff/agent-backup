@@ -3,6 +3,7 @@ name = "agent-backup"
 version = "0.3.0"
 description = "One-way backup for local AI agent configs"
 authors = ["agent-backup"]
+license = "MIT"
 edition = "2021"
 
 [lib]

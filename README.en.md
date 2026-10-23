@@ -7,6 +7,7 @@
 [![Release](https://img.shields.io/github/v/release/cloudycliff/agent-backup?label=release)](https://github.com/cloudycliff/agent-backup/releases/latest)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 [简体中文](README.md) · English
 
@@ -144,6 +145,10 @@ Directions already decided against or deferred, to save repeated discussion:
 ## Contributing
 
 Issues and PRs are welcome, especially ones adding the agents you use to the built-in presets. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+## License
+
+[MIT](LICENSE)
 
 ---
 

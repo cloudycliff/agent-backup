@@ -7,6 +7,7 @@
 [![Release](https://img.shields.io/github/v/release/cloudycliff/agent-backup?label=release)](https://github.com/cloudycliff/agent-backup/releases/latest)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 ![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 简体中文 · [English](README.en.md)
 
@@ -144,6 +145,10 @@ cd src-tauri && cargo test       # 后端测试（含一次读取本机 Agent �
 ## 参与贡献
 
 欢迎提 Issue 和 PR，尤其是把你常用的 Agent 加进内置预设。动手前请先读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## 许可证
+
+[MIT](LICENSE)
 
 ---
 
