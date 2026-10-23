@@ -333,6 +333,13 @@ pub fn open_config_dir() -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_log_dir() -> Result<(), String> {
+    let dir = crate::logging::log_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    open_path_in_explorer(&dir)
+}
+
+#[tauri::command]
 pub fn open_presets_file() -> Result<(), String> {
     let path = write_user_presets_template_if_missing()?;
     open_path_in_explorer(path.parent().unwrap_or(std::path::Path::new(".")))

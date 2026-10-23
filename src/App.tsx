@@ -1013,6 +1013,9 @@ export default function App() {
                 <button onClick={() => invoke("open_config_dir")}>
                   打开配置目录
                 </button>
+                <button onClick={() => invoke("open_log_dir")}>
+                  打开日志目录
+                </button>
                 <button onClick={() => invoke("open_presets_file")}>
                   打开预设目录
                 </button>

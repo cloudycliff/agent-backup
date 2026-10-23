@@ -118,7 +118,7 @@ fn tick(app: &AppHandle) {
     let cfg = match load_config() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[scheduler] load config failed: {e}");
+            log::error!("load config failed: {e}");
             return;
         }
     };
@@ -126,10 +126,7 @@ fn tick(app: &AppHandle) {
         return;
     }
     let Some(hm) = parse_hhmm(&cfg.schedule.time_local) else {
-        eprintln!(
-            "[scheduler] invalid time_local: {}",
-            cfg.schedule.time_local
-        );
+        log::warn!("invalid time_local: {}", cfg.schedule.time_local);
         return;
     };
     let now = Local::now().naive_local();
@@ -146,22 +143,19 @@ fn tick(app: &AppHandle) {
         return;
     }
 
+    log::info!("scheduled backup due (last run {last})");
     let result = crate::backup::run_backup_with_app(Some(app), &cfg, "schedule");
     if matches!(&result, Err(e) if e == BACKUP_BUSY) {
         return;
     }
     state.last_run_at = Some(stamp);
     state.last_run_date = None;
-    let _ = save_schedule_state(&state);
+    if let Err(e) = save_schedule_state(&state) {
+        log::error!("save schedule state failed: {e}");
+    }
     match result {
-        Ok(r) => {
-            eprintln!("[scheduler] backup {:?}: {}", r.overall_status, r.message);
-            notify_and_emit(app, &r);
-        }
-        Err(e) => {
-            eprintln!("[scheduler] backup failed: {e}");
-            notify_error(app, &e);
-        }
+        Ok(r) => notify_and_emit(app, &r),
+        Err(e) => notify_error(app, &e),
     }
 }
 

@@ -9,6 +9,7 @@
 | 文件 | 作用 |
 |---|---|
 | `config.json` | 勾选状态、目标、定时、加密等运行时偏好 |
+| `logs/agent-backup.log` | 运行日志（备份开始/结束、失败原因、定时事件），超过 1 MB 轮转为 `agent-backup.1.log` |
 | `agent-presets.json` | 用户自定义/覆盖 Agent 探测与路径分组（可选） |
 | `history.jsonl` | 本地备份运行历史（应用自动写入） |
 

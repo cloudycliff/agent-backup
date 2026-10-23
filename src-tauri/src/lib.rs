@@ -2,6 +2,7 @@ mod backup;
 mod commands;
 mod config;
 mod history;
+mod logging;
 mod notify;
 mod packager;
 mod presets;
@@ -17,6 +18,8 @@ use tauri_plugin_autostart::MacosLauncher;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    logging::init();
+    log::info!("Agent Backup {} starting", env!("CARGO_PKG_VERSION"));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -97,6 +100,7 @@ pub fn run() {
             commands::get_latest_failure,
             commands::get_status,
             commands::open_config_dir,
+            commands::open_log_dir,
             commands::open_presets_file,
             commands::reset_presets,
             commands::open_path,

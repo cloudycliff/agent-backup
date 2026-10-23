@@ -26,6 +26,7 @@ hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 whoami = "1"
 globset = "0.4"
+log = { version = "0.4", features = ["std"] }
 tauri-plugin-autostart = "2.5.1"
 tauri-plugin-notification = "2.3.3"
 aws-sdk-s3 = "1.141.0"

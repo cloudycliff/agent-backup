@@ -275,9 +275,24 @@ pub fn run_backup_with_app(
     let _guard = match BACKUP_LOCK.try_lock() {
         Ok(g) => g,
         Err(TryLockError::Poisoned(p)) => p.into_inner(),
-        Err(TryLockError::WouldBlock) => return Err(BACKUP_BUSY.to_string()),
+        Err(TryLockError::WouldBlock) => {
+            log::info!("{trigger} backup skipped: another backup is running");
+            return Err(BACKUP_BUSY.to_string());
+        }
     };
-    run_backup_inner(app, cfg, trigger)
+    log::info!("{trigger} backup started");
+    let started = Instant::now();
+    let result = run_backup_inner(app, cfg, trigger);
+    let secs = started.elapsed().as_secs_f64();
+    match &result {
+        Ok(r) => log::info!(
+            "{trigger} backup finished in {secs:.1}s: {:?}, {}",
+            r.overall_status,
+            r.message
+        ),
+        Err(e) => log::error!("{trigger} backup failed after {secs:.1}s: {e}"),
+    }
+    result
 }
 
 fn local_target(root: &str, hostname: &str, timestamp: &str) -> PathBuf {
@@ -323,6 +338,17 @@ fn run_backup_inner(
         }));
     }
 
+    for p in &packed {
+        match (&p.error, p.warnings.first()) {
+            (Some(e), _) => log::warn!("source {} failed: {e}", p.key),
+            (None, Some(first)) => log::warn!(
+                "source {}: {} warning(s), first: {first}",
+                p.key,
+                p.warnings.len()
+            ),
+            (None, None) => {}
+        }
+    }
     if !packed.iter().any(|p| p.status == Status::Ok) {
         return Err("没有可备份的内容（请检查勾选与路径）".into());
     }
@@ -375,7 +401,10 @@ fn run_backup_inner(
         };
         let (status, error, uri) = match outcome {
             Ok(uri) => (Status::Ok, None, Some(uri)),
-            Err(e) => (Status::Failed, Some(e), None),
+            Err(e) => {
+                log::error!("destination {} failed: {e}", dest.name());
+                (Status::Failed, Some(e), None)
+            }
         };
         dest_results.push(DestResult {
             id: dest.id().to_string(),
@@ -407,7 +436,7 @@ fn run_backup_inner(
             }
         };
         if let Err(e) = written {
-            eprintln!("write manifest to {} failed: {e}", dest.name());
+            log::warn!("write manifest to {} failed: {e}", dest.name());
         }
     }
 

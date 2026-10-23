@@ -13,20 +13,16 @@ pub fn notify_and_emit(app: &AppHandle, result: &BackupRunResult) {
     } else {
         "备份失败"
     };
-    let _ = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(&result.message)
-        .show();
+    show(app, title, &result.message);
 }
 
 pub fn notify_error(app: &AppHandle, err: &str) {
     let _ = app.emit("backup-finished", BackupRunResult::failure(err));
-    let _ = app
-        .notification()
-        .builder()
-        .title("备份失败")
-        .body(err)
-        .show();
+    show(app, "备份失败", err);
+}
+
+fn show(app: &AppHandle, title: &str, body: &str) {
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        log::warn!("system notification failed: {e}");
+    }
 }
