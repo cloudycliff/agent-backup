@@ -7,7 +7,7 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 use crate::backup::BACKUP_BUSY;
-use crate::config::{config_dir, load_config, write_atomic};
+use crate::config::{config_dir, load_config, write_atomic, AppConfig};
 use crate::notify::{notify_and_emit, notify_error};
 
 static SCHEDULER_STARTED: AtomicBool = AtomicBool::new(false);
@@ -83,6 +83,35 @@ fn latest_slot(now: NaiveDateTime, (h, m): (u32, u32)) -> NaiveDateTime {
 
 fn is_due(now: NaiveDateTime, hm: (u32, u32), last: NaiveDateTime) -> bool {
     last < latest_slot(now, hm)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NextRun {
+    /// Local time, `YYYY-MM-DD HH:mm`.
+    pub at: String,
+    /// A slot was missed and the scheduler will run on its next tick.
+    pub overdue: bool,
+}
+
+fn next_due(now: NaiveDateTime, hm: (u32, u32), last: Option<NaiveDateTime>) -> (NaiveDateTime, bool) {
+    match last {
+        Some(last) if is_due(now, hm, last) => (now, true),
+        _ => (latest_slot(now, hm) + TimeDelta::days(1), false),
+    }
+}
+
+/// When the scheduler will next start a backup; `None` if scheduling is off.
+pub fn next_run(cfg: &AppConfig) -> Option<NextRun> {
+    if !cfg.schedule.enabled {
+        return None;
+    }
+    let hm = parse_hhmm(&cfg.schedule.time_local)?;
+    let now = Local::now().naive_local();
+    let (at, overdue) = next_due(now, hm, last_run(&load_schedule_state(), hm));
+    Some(NextRun {
+        at: at.format("%Y-%m-%d %H:%M").to_string(),
+        overdue,
+    })
 }
 
 fn tick(app: &AppHandle) {
@@ -164,6 +193,18 @@ mod tests {
         assert!(is_due(at("2026-10-24T08:00:00"), hm, at("2026-10-22T21:00:05")));
         // Already caught up this morning: wait for tonight.
         assert!(!is_due(at("2026-10-24T09:00:00"), hm, at("2026-10-24T08:00:00")));
+    }
+
+    #[test]
+    fn next_due_is_tonight_tomorrow_or_now_when_overdue() {
+        let hm = (21, 0);
+        let ran_today = Some(at("2026-10-23T21:00:05"));
+        assert_eq!(next_due(at("2026-10-23T22:00:00"), hm, ran_today), (at("2026-10-24T21:00:00"), false));
+        let ran_yesterday = Some(at("2026-10-22T21:00:05"));
+        assert_eq!(next_due(at("2026-10-23T09:00:00"), hm, ran_yesterday), (at("2026-10-23T21:00:00"), false));
+        let missed = at("2026-10-24T08:00:00");
+        assert_eq!(next_due(missed, hm, ran_yesterday), (missed, true));
+        assert_eq!(next_due(at("2026-10-23T09:00:00"), hm, None), (at("2026-10-23T21:00:00"), false));
     }
 
     #[test]

@@ -17,6 +17,8 @@ use crate::presets::{agent_enabled, effective_group_enabled, load_presets};
 static BACKUP_LOCK: Mutex<()> = Mutex::new(());
 
 pub const BACKUP_BUSY: &str = "已有备份正在进行，已跳过";
+/// Subdirectory of a local destination that holds all backups.
+pub const BACKUPS_DIR: &str = "backups";
 
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H%M%SZ";
 const PACK_PERCENT_SHARE: f64 = 90.0;
@@ -212,6 +214,7 @@ impl Throttle {
 /// Every enabled source with its file list collected; the single place that decides what gets backed up.
 fn plan_sources(cfg: &AppConfig) -> Result<Vec<SourcePlan>, String> {
     let agents = load_presets()?.agents;
+    let skip_dirs = backup_output_dirs(cfg);
     let mut plans = Vec::new();
     for agent in agents
         .iter()
@@ -224,7 +227,7 @@ fn plan_sources(cfg: &AppConfig) -> Result<Vec<SourcePlan>, String> {
             .map(|g| g.id.clone())
             .collect();
         if !groups.is_empty() {
-            plans.push(plan_agent(agent, &groups, &cfg.exclusions));
+            plans.push(plan_agent(agent, &groups, &cfg.exclusions, &skip_dirs));
         }
     }
     for custom in cfg.sources.custom.iter().filter(|c| c.enabled) {
@@ -236,9 +239,23 @@ fn plan_sources(cfg: &AppConfig) -> Result<Vec<SourcePlan>, String> {
             Path::new(&custom.path),
             &slug,
             &cfg.exclusions,
+            &skip_dirs,
         ));
     }
     Ok(plans)
+}
+
+/// Canonical `backups/` directories of every local destination that has written one.
+pub fn backup_output_dirs(cfg: &AppConfig) -> Vec<PathBuf> {
+    cfg.destinations
+        .iter()
+        .filter_map(|d| match d {
+            Destination::Local { local, .. } => {
+                fs::canonicalize(Path::new(&local.root_path).join(BACKUPS_DIR)).ok()
+            }
+            Destination::S3 { .. } => None,
+        })
+        .collect()
 }
 
 pub fn estimate_backup(cfg: &AppConfig) -> Result<BackupEstimate, String> {
@@ -264,7 +281,7 @@ pub fn run_backup_with_app(
 }
 
 fn local_target(root: &str, hostname: &str, timestamp: &str) -> PathBuf {
-    PathBuf::from(root).join("backups").join(hostname).join(timestamp)
+    PathBuf::from(root).join(BACKUPS_DIR).join(hostname).join(timestamp)
 }
 
 fn run_backup_inner(

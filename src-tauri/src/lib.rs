@@ -95,6 +95,7 @@ pub fn run() {
             commands::estimate_backup_size,
             commands::list_history,
             commands::get_latest_failure,
+            commands::get_status,
             commands::open_config_dir,
             commands::open_presets_file,
             commands::reset_presets,

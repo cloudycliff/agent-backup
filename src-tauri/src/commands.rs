@@ -1,7 +1,11 @@
 use serde::Serialize;
 use std::path::PathBuf;
 
-use crate::backup::{estimate_backup, run_backup_with_app, BackupEstimate, BackupRunResult};
+use crate::backup::{
+    backup_output_dirs, estimate_backup, run_backup_with_app, BackupEstimate, BackupRunResult,
+};
+use crate::history::HistoryEntry;
+use crate::scheduler::NextRun;
 use crate::config::{
     config_dir, config_path, ensure_agent_defaults, load_config, open_path_in_explorer, save_config,
     user_presets_path, AppConfig, CustomSource, Destination, LocalDestination, S3Destination,
@@ -215,6 +219,9 @@ pub fn set_destination_enabled(id: String, enabled: bool) -> Result<BootstrapSta
 #[tauri::command]
 pub fn add_custom_source(label: String, path: String) -> Result<BootstrapState, String> {
     let mut cfg = load_config()?;
+    if crate::packager::is_within(std::path::Path::new(&path), &backup_output_dirs(&cfg)) {
+        return Err("该文件夹位于备份目标的 backups 目录内，不能作为备份源".into());
+    }
     cfg.sources.custom.push(CustomSource {
         id: format!("custom_{}", uuid::Uuid::new_v4()),
         label: if label.trim().is_empty() {
@@ -297,13 +304,27 @@ pub async fn retry_backup(app: tauri::AppHandle) -> Result<BackupRunResult, Stri
 }
 
 #[tauri::command]
-pub fn list_history(only_failed: bool) -> Result<Vec<crate::history::HistoryEntry>, String> {
+pub fn list_history(only_failed: bool) -> Result<Vec<HistoryEntry>, String> {
     crate::history::load_history(100, only_failed)
 }
 
 #[tauri::command]
-pub fn get_latest_failure() -> Result<Option<crate::history::HistoryEntry>, String> {
+pub fn get_latest_failure() -> Result<Option<HistoryEntry>, String> {
     crate::history::latest_non_ok()
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusView {
+    pub last_success: Option<HistoryEntry>,
+    pub next_run: Option<NextRun>,
+}
+
+#[tauri::command]
+pub fn get_status() -> Result<StatusView, String> {
+    Ok(StatusView {
+        last_success: crate::history::latest_success()?,
+        next_run: crate::scheduler::next_run(&load_config()?),
+    })
 }
 
 #[tauri::command]

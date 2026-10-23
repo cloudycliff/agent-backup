@@ -102,7 +102,33 @@ type HistoryEntry = {
   destinations: BackupResult["destinations"];
 };
 
+type StatusView = {
+  last_success: HistoryEntry | null;
+  next_run: { at: string; overdue: boolean } | null;
+};
+
 type Tab = "backup" | "destinations" | "history" | "settings";
+
+const TRIGGER_LABELS: Record<string, string> = {
+  manual: "手动",
+  schedule: "定时",
+  retry: "重跑",
+};
+
+/** Run stamps are UTC `YYYY-MM-DDTHHMMSSZ`; show them in local time. */
+function formatRunTime(stamp: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp);
+  if (!m) return stamp;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  return new Date(Date.UTC(y, mo - 1, d, h, mi, s)).toLocaleString("zh-CN", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("backup");
@@ -119,6 +145,7 @@ export default function App() {
   const [onlyFailed, setOnlyFailed] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [latestFailure, setLatestFailure] = useState<HistoryEntry | null>(null);
+  const [status, setStatus] = useState<StatusView | null>(null);
   const [showS3Form, setShowS3Form] = useState(false);
   const [s3TestMsg, setS3TestMsg] = useState<string | null>(null);
   const [s3Form, setS3Form] = useState({
@@ -172,6 +199,10 @@ export default function App() {
     setPasswordDraft("");
   }, []);
 
+  const refreshStatus = useCallback(async () => {
+    setStatus(await invoke<StatusView>("get_status"));
+  }, []);
+
   const refreshHistory = useCallback(async (failedOnly = onlyFailed) => {
     const rows = await invoke<HistoryEntry[]>("list_history", {
       onlyFailed: failedOnly,
@@ -179,7 +210,8 @@ export default function App() {
     setHistory(rows);
     const fail = await invoke<HistoryEntry | null>("get_latest_failure");
     setLatestFailure(fail);
-  }, [onlyFailed]);
+    await refreshStatus();
+  }, [onlyFailed, refreshStatus]);
 
   useEffect(() => {
     refresh().catch((e) => setError(String(e)));
@@ -241,7 +273,7 @@ export default function App() {
     try {
       const data = await fn();
       setBoot(data);
-      await refreshEstimate();
+      await Promise.all([refreshEstimate(), refreshStatus()]);
     } catch (e) {
       setError(String(e));
     }
@@ -399,6 +431,35 @@ export default function App() {
             <p className="hint">
               已开启加密但未设置密码。请到「设置」填写密码后再备份。
             </p>
+          )}
+          {status && (
+            <div className="status-line">
+              <span>
+                上次成功备份：
+                {status.last_success ? (
+                  <>
+                    {formatRunTime(status.last_success.created_at)}
+                    {" · "}
+                    {TRIGGER_LABELS[status.last_success.trigger] ??
+                      status.last_success.trigger}
+                    {status.last_success.overall_status === "partial" &&
+                      "（部分成功）"}
+                    {status.last_success.destinations.length === 0 &&
+                      "（内容无变化）"}
+                  </>
+                ) : (
+                  "暂无"
+                )}
+              </span>
+              <span>
+                下次定时：
+                {!status.next_run
+                  ? "未开启"
+                  : status.next_run.overdue
+                    ? "已错过，即将补跑"
+                    : status.next_run.at}
+              </span>
+            </div>
           )}
           <p className="muted">
             将写入 {enabledDestCount} 个启用目标
@@ -737,9 +798,11 @@ export default function App() {
                   <li key={h.id} style={{ alignItems: "flex-start" }}>
                     <div style={{ flex: 1 }}>
                       <div className="row-gap">
-                        <strong>{h.created_at}</strong>
+                        <strong>{formatRunTime(h.created_at)}</strong>
                         <span className="tag">{h.overall_status}</span>
-                        <span className="tag">{h.trigger}</span>
+                        <span className="tag">
+                          {TRIGGER_LABELS[h.trigger] ?? h.trigger}
+                        </span>
                       </div>
                       <p className="muted">{h.message}</p>
                       {expanded && (

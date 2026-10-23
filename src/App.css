@@ -283,6 +283,18 @@ input[type="time"] {
   min-width: 0;
 }
 
+.status-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+  margin: 12px 0 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f5faf7;
+  border: 1px solid #d7e6dd;
+  font-size: 0.92rem;
+}
+
 .progress-card {
   margin: 12px 0;
   padding: 12px;

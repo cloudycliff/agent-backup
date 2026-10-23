@@ -45,6 +45,13 @@ pub fn latest_non_ok() -> Result<Option<HistoryEntry>, String> {
     Ok(entries.into_iter().next())
 }
 
+/// Most recent run that wrote (or confirmed) at least one complete copy.
+pub fn latest_success() -> Result<Option<HistoryEntry>, String> {
+    Ok(load_history(usize::MAX, false)?
+        .into_iter()
+        .find(|e| matches!(e.overall_status, Status::Ok | Status::Partial)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

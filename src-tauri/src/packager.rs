@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{AesMode, CompressionMethod, ZipWriter};
 
-use crate::backup::Status;
+use crate::backup::{Status, BACKUPS_DIR};
 use crate::config::ExclusionSettings;
 use crate::presets::ResolvedAgent;
 
@@ -161,6 +161,7 @@ pub fn plan_agent(
     agent: &ResolvedAgent,
     enabled_group_ids: &[String],
     exclusions: &ExclusionSettings,
+    skip_dirs: &[PathBuf],
 ) -> SourcePlan {
     let includes: Vec<String> = agent
         .groups
@@ -170,7 +171,8 @@ pub fn plan_agent(
         .collect();
     let collected = match &agent.root_path {
         None => Err("根目录未解析".to_string()),
-        Some(root) => collect_files(root, &includes, exclusions, &agent.hard_exclude),
+        Some(root) => Rules::new(exclusions, &agent.hard_exclude, skip_dirs)
+            .and_then(|rules| collect_files(root, &includes, &rules)),
     };
     SourcePlan::new(
         &agent.key,
@@ -189,11 +191,14 @@ pub fn plan_custom(
     path: &Path,
     archive_stem: &str,
     exclusions: &ExclusionSettings,
+    skip_dirs: &[PathBuf],
 ) -> SourcePlan {
-    let collected = if path.exists() {
-        collect_custom(path, exclusions)
-    } else {
+    let collected = if !path.exists() {
         Err("路径不存在".to_string())
+    } else if is_within(path, skip_dirs) {
+        Err("位于备份目标的 backups 目录内，已跳过".to_string())
+    } else {
+        Rules::new(exclusions, &[], skip_dirs).and_then(|rules| collect_custom(path, &rules))
     };
     SourcePlan::new(
         id,
@@ -287,24 +292,54 @@ fn walk_error(err: &walkdir::Error) -> String {
     }
 }
 
+/// Whether `path` resolves to one of `dirs` (already canonical) or somewhere below it.
+pub fn is_within(path: &Path, dirs: &[PathBuf]) -> bool {
+    !dirs.is_empty()
+        && fs::canonicalize(path).is_ok_and(|p| dirs.iter().any(|d| p.starts_with(d)))
+}
+
+/// Everything a walk leaves out.
+struct Rules<'a> {
+    file_globs: GlobSet,
+    dir_globs: GlobSet,
+    hard_exclude: &'a [String],
+    /// Canonical `backups/` directories of local destinations; packing them would
+    /// re-archive earlier backups on every run.
+    skip_dirs: &'a [PathBuf],
+}
+
+impl<'a> Rules<'a> {
+    fn new(
+        exclusions: &ExclusionSettings,
+        hard_exclude: &'a [String],
+        skip_dirs: &'a [PathBuf],
+    ) -> Result<Self, String> {
+        let (file_globs, dir_globs) = build_exclusion_set(exclusions, hard_exclude)?;
+        Ok(Self {
+            file_globs,
+            dir_globs,
+            hard_exclude,
+            skip_dirs,
+        })
+    }
+
+    fn skips_dir(&self, entry: &walkdir::DirEntry) -> bool {
+        let name = entry.file_name().to_string_lossy();
+        should_skip_dir(&name, &self.dir_globs)
+            || (name == BACKUPS_DIR && is_within(entry.path(), self.skip_dirs))
+    }
+
+    fn skips_file(&self, name: &str, relative: &str) -> bool {
+        should_skip_file(name, relative, &self.file_globs, self.hard_exclude)
+    }
+}
+
 /// Walks `dir`, appending files (relative to `root`) that survive the exclusion rules.
-fn walk_into(
-    out: &mut Collected,
-    root: &Path,
-    dir: &Path,
-    file_globs: &GlobSet,
-    dir_globs: &GlobSet,
-    hard_exclude: &[String],
-) -> Result<(), String> {
+fn walk_into(out: &mut Collected, root: &Path, dir: &Path, rules: &Rules) -> Result<(), String> {
     let walker = WalkDir::new(dir)
         .follow_links(true)
         .into_iter()
-        .filter_entry(|e| {
-            if e.depth() == 0 || !e.file_type().is_dir() {
-                return true;
-            }
-            !should_skip_dir(&e.file_name().to_string_lossy(), dir_globs)
-        });
+        .filter_entry(|e| e.depth() == 0 || !e.file_type().is_dir() || !rules.skips_dir(e));
     for entry in walker {
         let entry = match entry {
             Ok(e) => e,
@@ -323,7 +358,7 @@ fn walk_into(
             .to_string_lossy()
             .replace('\\', "/");
         let name = entry.file_name().to_string_lossy().to_string();
-        if should_skip_file(&name, &rel, file_globs, hard_exclude) {
+        if rules.skips_file(&name, &rel) {
             continue;
         }
         out.files.push((abs, rel));
@@ -331,19 +366,13 @@ fn walk_into(
     Ok(())
 }
 
-fn collect_files(
-    root: &Path,
-    includes: &[String],
-    exclusions: &ExclusionSettings,
-    hard_exclude: &[String],
-) -> Result<Collected, String> {
-    let (file_globs, dir_globs) = build_exclusion_set(exclusions, hard_exclude)?;
+fn collect_files(root: &Path, includes: &[String], rules: &Rules) -> Result<Collected, String> {
     let mut out = Collected::default();
 
     for include in includes {
         let include = include.replace('\\', "/");
         let target = root.join(include.trim_end_matches('/'));
-        if !target.exists() {
+        if !target.exists() || is_within(&target, rules.skip_dirs) {
             continue;
         }
         if target.is_file() {
@@ -353,12 +382,12 @@ fn collect_files(
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            if !should_skip_file(&name, &rel, &file_globs, hard_exclude) {
+            if !rules.skips_file(&name, &rel) {
                 out.files.push((target, rel));
             }
             continue;
         }
-        walk_into(&mut out, root, &target, &file_globs, &dir_globs, hard_exclude)?;
+        walk_into(&mut out, root, &target, rules)?;
     }
 
     out.files.sort_by(|a, b| a.1.cmp(&b.1));
@@ -366,28 +395,23 @@ fn collect_files(
     Ok(out)
 }
 
-fn collect_files_tree(
-    root: &Path,
-    exclusions: &ExclusionSettings,
-    hard_exclude: &[String],
-) -> Result<Collected, String> {
-    let (file_globs, dir_globs) = build_exclusion_set(exclusions, hard_exclude)?;
+fn collect_files_tree(root: &Path, rules: &Rules) -> Result<Collected, String> {
     let mut out = Collected::default();
-    walk_into(&mut out, root, root, &file_globs, &dir_globs, hard_exclude)?;
+    walk_into(&mut out, root, root, rules)?;
     out.files.sort_by(|a, b| a.1.cmp(&b.1));
     Ok(out)
 }
 
-fn collect_custom(path: &Path, exclusions: &ExclusionSettings) -> Result<Collected, String> {
+fn collect_custom(path: &Path, rules: &Rules) -> Result<Collected, String> {
     if path.is_dir() {
-        return collect_files_tree(path, exclusions, &[]);
+        return collect_files_tree(path, rules);
     }
     let name = path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("file")
         .to_string();
-    collect_files(path.parent().unwrap_or(path), &[name], exclusions, &[])
+    collect_files(path.parent().unwrap_or(path), &[name], rules)
 }
 
 pub struct ZipOutcome {
@@ -505,6 +529,31 @@ mod tests {
         files.iter().map(|(_, r)| r.as_str()).collect()
     }
 
+    fn default_rules() -> Rules<'static> {
+        Rules::new(&AppConfig::default().exclusions, &[], &[]).unwrap()
+    }
+
+    #[test]
+    fn destination_backups_dir_inside_a_source_is_not_packed() {
+        let base = temp_base("recursion");
+        let output = base.join("dest").join("backups").join("host");
+        fs::create_dir_all(&output).unwrap();
+        fs::write(output.join("old.zip"), "z").unwrap();
+        fs::create_dir_all(base.join("other").join("backups")).unwrap();
+        fs::write(base.join("other").join("backups").join("keep.md"), "k").unwrap();
+        fs::write(base.join("notes.md"), "n").unwrap();
+        let skip = vec![fs::canonicalize(base.join("dest").join("backups")).unwrap()];
+        let excl = AppConfig::default().exclusions;
+
+        let plan = plan_custom("c", "C", &base, "c", &excl, &skip);
+        let files = &plan.collected.as_ref().unwrap().files;
+        assert_eq!(rels(files), vec!["notes.md", "other/backups/keep.md"]);
+
+        let inside = plan_custom("c", "C", &output, "c", &excl, &skip);
+        assert!(inside.collected.is_err());
+        let _ = fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn collect_files_follows_directory_links() {
         let base = temp_base("link");
@@ -516,11 +565,10 @@ mod tests {
         fs::write(skills.join("local.md"), "b").unwrap();
         link_dir(&shared, &skills.join("skill-a"));
 
-        let excl = AppConfig::default().exclusions;
-        let files = collect_files(&base.join("root"), &["skills/".into()], &excl, &[]).unwrap();
+        let files = collect_files(&base.join("root"), &["skills/".into()], &default_rules()).unwrap();
         assert_eq!(rels(&files.files), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
 
-        let tree = collect_files_tree(&base.join("root"), &excl, &[]).unwrap();
+        let tree = collect_files_tree(&base.join("root"), &default_rules()).unwrap();
         assert_eq!(rels(&tree.files), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
         let _ = fs::remove_dir_all(&base);
     }
@@ -532,8 +580,7 @@ mod tests {
         fs::write(base.join("tmp").join("chat").join("log.json"), "a").unwrap();
         fs::write(base.join("tmp").join("chat").join("tmp").join("x"), "b").unwrap();
 
-        let excl = AppConfig::default().exclusions;
-        let files = collect_files(&base, &["tmp/".into()], &excl, &[]).unwrap();
+        let files = collect_files(&base, &["tmp/".into()], &default_rules()).unwrap();
         assert_eq!(rels(&files.files), vec!["tmp/chat/log.json"]);
         let _ = fs::remove_dir_all(&base);
     }
@@ -546,8 +593,7 @@ mod tests {
         fs::write(skills.join("a.md"), "a").unwrap();
         link_dir(&base, &skills.join("loop"));
 
-        let excl = AppConfig::default().exclusions;
-        let files = collect_files(&base, &["skills/".into()], &excl, &[]).unwrap();
+        let files = collect_files(&base, &["skills/".into()], &default_rules()).unwrap();
         assert!(files.files.iter().any(|(_, r)| r == "skills/a.md"));
         assert!(files.files.len() < 10, "loop was expanded: {:?}", rels(&files.files));
         assert!(!files.warnings.is_empty(), "loop should be reported");
@@ -566,7 +612,7 @@ mod tests {
         link_dir(&gone, &root.join("skills").join("dangling"));
         fs::remove_dir_all(&gone).unwrap();
 
-        let collected = collect_files(&root, &["skills/".into()], &AppConfig::default().exclusions, &[]);
+        let collected = collect_files(&root, &["skills/".into()], &default_rules());
         let plan = SourcePlan::new("t", "agent", "T", None, root.clone(), "t", collected);
 
         #[cfg(windows)]
