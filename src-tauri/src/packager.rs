@@ -137,7 +137,10 @@ impl SourcePlan {
                     if z.file_count == 0 {
                         let first = out.warnings.first().cloned().unwrap_or_default();
                         out.status = Status::Failed;
-                        out.error = Some(format!("所有文件都读取失败：{first}"));
+                        out.error = Some(t!(
+                            "所有文件都读取失败：{first}",
+                            "Every file failed to read: {first}"
+                        ));
                     } else {
                         out.bytes = z.bytes;
                         out.sha256 = z.sha256;
@@ -170,7 +173,7 @@ pub fn plan_agent(
         .flat_map(|g| g.include.iter().cloned())
         .collect();
     let collected = match &agent.root_path {
-        None => Err("根目录未解析".to_string()),
+        None => Err(t!("根目录未解析", "Root folder could not be resolved")),
         Some(root) => Rules::new(exclusions, &agent.hard_exclude, skip_dirs)
             .and_then(|rules| collect_files(root, &includes, &rules)),
     };
@@ -194,9 +197,12 @@ pub fn plan_custom(
     skip_dirs: &[PathBuf],
 ) -> SourcePlan {
     let collected = if !path.exists() {
-        Err("路径不存在".to_string())
+        Err(t!("路径不存在", "Path does not exist"))
     } else if is_within(path, skip_dirs) {
-        Err("位于备份目标的 backups 目录内，已跳过".to_string())
+        Err(t!(
+            "位于备份目标的 backups 目录内，已跳过",
+            "Inside a destination's backups folder; skipped"
+        ))
     } else {
         Rules::new(exclusions, &[], skip_dirs).and_then(|rules| collect_custom(path, &rules))
     };
@@ -215,7 +221,7 @@ fn cap_warnings(warnings: &mut Vec<String>) {
     if warnings.len() > MAX_WARNINGS {
         let extra = warnings.len() - MAX_WARNINGS;
         warnings.truncate(MAX_WARNINGS);
-        warnings.push(format!("……另有 {extra} 条"));
+        warnings.push(t!("……另有 {extra} 条", "…and {extra} more"));
     }
 }
 
@@ -287,8 +293,8 @@ fn should_skip_file(name: &str, relative: &str, file_globs: &GlobSet, hard: &[St
 
 fn walk_error(err: &walkdir::Error) -> String {
     match err.path() {
-        Some(p) => format!("跳过 {}: {err}", p.display()),
-        None => format!("跳过: {err}"),
+        Some(p) => t!("跳过 {}: {err}", "Skipped {}: {err}", p.display()),
+        None => t!("跳过: {err}", "Skipped: {err}"),
     }
 }
 
@@ -423,9 +429,9 @@ pub struct ZipOutcome {
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|e| format!("读取 zip 失败: {e}"))?;
+    let mut file = File::open(path).map_err(|e| t!("读取 zip 失败: {e}", "Failed to read zip: {e}"))?;
     let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("读取 zip 失败: {e}"))?;
+    std::io::copy(&mut file, &mut hasher).map_err(|e| t!("读取 zip 失败: {e}", "Failed to read zip: {e}"))?;
     Ok(hex::encode(hasher.finalize()))
 }
 
@@ -440,7 +446,7 @@ pub fn zip_files(
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let file = File::create(out_path).map_err(|e| format!("创建 zip 失败: {e}"))?;
+    let file = File::create(out_path).map_err(|e| t!("创建 zip 失败: {e}", "Failed to create zip: {e}"))?;
     let mut zip = ZipWriter::new(file);
     let mut options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     if let Some(pw) = password {
@@ -455,13 +461,13 @@ pub fn zip_files(
         let mut src = match File::open(abs) {
             Ok(f) => f,
             Err(e) => {
-                warnings.push(format!("读取失败 {rel}: {e}"));
+                warnings.push(t!("读取失败 {rel}: {e}", "Failed to read {rel}: {e}"));
                 continue;
             }
         };
         let len = src.metadata().map(|m| m.len()).unwrap_or(0);
         zip.start_file(rel, options.large_file(len >= u32::MAX as u64))
-            .map_err(|e| format!("写入 zip entry 失败: {e}"))?;
+            .map_err(|e| t!("写入 zip entry 失败: {e}", "Failed to write zip entry: {e}"))?;
         let mut file_hasher = Sha256::new();
         let mut read_error = None;
         loop {
@@ -475,13 +481,13 @@ pub fn zip_files(
             };
             file_hasher.update(&buf[..n]);
             zip.write_all(&buf[..n])
-                .map_err(|e| format!("压缩写入失败: {e}"))?;
+                .map_err(|e| t!("压缩写入失败: {e}", "Compression failed: {e}"))?;
             on_bytes(n as u64);
         }
         if let Some(e) = read_error {
             zip.abort_file()
-                .map_err(|e| format!("撤销 zip 条目失败: {e}"))?;
-            warnings.push(format!("读取失败 {rel}: {e}"));
+                .map_err(|e| t!("撤销 zip 条目失败: {e}", "Failed to roll back zip entry: {e}"))?;
+            warnings.push(t!("读取失败 {rel}: {e}", "Failed to read {rel}: {e}"));
             continue;
         }
         hasher.update(rel.as_bytes());
@@ -489,7 +495,7 @@ pub fn zip_files(
         file_count += 1;
     }
 
-    zip.finish().map_err(|e| format!("完成 zip 失败: {e}"))?;
+    zip.finish().map_err(|e| t!("完成 zip 失败: {e}", "Failed to finish zip: {e}"))?;
     Ok(ZipOutcome {
         bytes: fs::metadata(out_path).map(|m| m.len()).unwrap_or(0),
         sha256: hex::encode(hasher.finalize()),

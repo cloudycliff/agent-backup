@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 use tauri::AppHandle;
 
-use crate::backup::BACKUP_BUSY;
+use crate::backup::backup_busy;
 use crate::config::{config_dir, load_config, write_atomic, AppConfig};
 use crate::notify::{notify_and_emit, notify_error};
 
@@ -145,7 +145,7 @@ fn tick(app: &AppHandle) {
 
     log::info!("scheduled backup due (last run {last})");
     let result = crate::backup::run_backup_with_app(Some(app), &cfg, "schedule");
-    if matches!(&result, Err(e) if e == BACKUP_BUSY) {
+    if matches!(&result, Err(e) if *e == backup_busy()) {
         return;
     }
     state.last_run_at = Some(stamp);

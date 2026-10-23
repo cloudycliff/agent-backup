@@ -26,7 +26,7 @@ pub fn load_history(limit: usize, only_failed: bool) -> Result<Vec<HistoryEntry>
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let raw = fs::read_to_string(&path).map_err(|e| format!("读取历史失败: {e}"))?;
+    let raw = fs::read_to_string(&path).map_err(|e| t!("读取历史失败: {e}", "Failed to read history: {e}"))?;
     let mut entries: Vec<HistoryEntry> = raw
         .lines()
         .filter(|l| !l.trim().is_empty())

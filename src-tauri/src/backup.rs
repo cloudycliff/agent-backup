@@ -18,7 +18,9 @@ use crate::presets::{agent_enabled, effective_group_enabled, load_presets};
 
 static BACKUP_LOCK: Mutex<()> = Mutex::new(());
 
-pub const BACKUP_BUSY: &str = "已有备份正在进行，已跳过";
+pub fn backup_busy() -> String {
+    t!("已有备份正在进行，已跳过", "Another backup is already running; skipped")
+}
 /// Subdirectory of a local destination that holds all backups.
 pub const BACKUPS_DIR: &str = "backups";
 
@@ -162,7 +164,10 @@ fn encryption_password(cfg: &AppConfig) -> Result<Option<String>, String> {
         .clone()
         .filter(|s| !s.trim().is_empty());
     if pw.is_none() {
-        return Err("已开启加密，请先在设置中设置密码".into());
+        return Err(t!(
+            "已开启加密，请先在设置中设置密码",
+            "Encryption is on; set a password in Settings first"
+        ));
     }
     Ok(pw)
 }
@@ -294,7 +299,7 @@ fn pack_sources(
             s.spawn(|| loop {
                 let next = queue.lock().unwrap_or_else(PoisonError::into_inner).next();
                 let Some((i, plan)) = next else { break };
-                let label = format!("打包 {}", plan.label);
+                let label = t!("打包 {}", "Packing {}", plan.label);
                 report(&label, true);
                 let packed = plan.pack(work_dir, timestamp, password, &mut |n| {
                     raw_done.fetch_add(n, Ordering::Relaxed);
@@ -342,7 +347,7 @@ pub fn run_backup_with_app(
         Err(TryLockError::Poisoned(p)) => p.into_inner(),
         Err(TryLockError::WouldBlock) => {
             log::info!("{trigger} backup skipped: another backup is running");
-            return Err(BACKUP_BUSY.to_string());
+            return Err(backup_busy());
         }
     };
     log::info!("{trigger} backup started");
@@ -368,10 +373,13 @@ fn run_backup_inner(
     let password = encryption_password(cfg)?;
     let enabled_dests: Vec<&Destination> = cfg.destinations.iter().filter(|d| d.enabled).collect();
     if enabled_dests.is_empty() {
-        return Err("请先添加并启用至少一个备份目标".into());
+        return Err(t!(
+            "请先添加并启用至少一个备份目标",
+            "Add and enable at least one backup destination first"
+        ));
     }
 
-    emit_progress(app, "estimating", 0, 1, "正在扫描文件…", (0, 0), 0);
+    emit_progress(app, "estimating", 0, 1, &t!("正在扫描文件…", "Scanning files…"), (0, 0), 0);
     let plans = plan_sources(cfg)?;
     let raw_total: u64 = plans.iter().map(|p| p.bytes).sum();
 
@@ -394,7 +402,10 @@ fn run_backup_inner(
         }
     }
     if !packed.iter().any(|p| p.status == Status::Ok) {
-        return Err("没有可备份的内容（请检查勾选与路径）".into());
+        return Err(t!(
+            "没有可备份的内容（请检查勾选与路径）",
+            "Nothing to back up (check the selected sources and their paths)"
+        ));
     }
 
     let dest_ids: Vec<&str> = enabled_dests.iter().map(|d| d.id.as_str()).collect();
@@ -413,10 +424,15 @@ fn run_backup_inner(
                 work_dir: work.0.to_string_lossy().to_string(),
                 sources: packed.iter().map(SourceRecord::from).collect(),
                 destinations: Vec::new(),
-                message: format!("内容与 {} 的备份相同，本次未写入新副本", base.created_at),
+                message: t!(
+                    "内容与 {} 的备份相同，本次未写入新副本",
+                    "Content matches the backup from {}; no new copy written",
+                    base.created_at
+                ),
             };
             append_history(&result)?;
-            emit_progress(app, "done", 1, 1, "完成（内容无变化）", (raw_done, raw_total), 100);
+            let label = t!("完成（内容无变化）", "Done (no changes)");
+            emit_progress(app, "done", 1, 1, &label, (raw_done, raw_total), 100);
             return Ok(result);
         }
     }
@@ -430,7 +446,7 @@ fn run_backup_inner(
             "uploading",
             i as u32 + 1,
             dest_total as u32,
-            &format!("写入目标 {}", dest.name),
+            &t!("写入目标 {}", "Writing to {}", dest.name),
             (0, 0),
             percent.round() as u32,
         );
@@ -452,7 +468,7 @@ fn run_backup_inner(
         });
     }
 
-    emit_progress(app, "finishing", 1, 1, "写入清单…", (0, 0), 99);
+    emit_progress(app, "finishing", 1, 1, &t!("写入清单…", "Writing manifest…"), (0, 0), 99);
     let summary = Summary::new(&packed, &dest_results);
     let manifest_json =
         build_manifest_value(&packed, cfg, &hostname, &timestamp, &dest_results, &summary);
@@ -479,7 +495,7 @@ fn run_backup_inner(
         message: summary.message(),
     };
     append_history(&result)?;
-    emit_progress(app, "done", 1, 1, "完成", (raw_done, raw_total), 100);
+    emit_progress(app, "done", 1, 1, &t!("完成", "Done"), (raw_done, raw_total), 100);
     Ok(result)
 }
 
@@ -579,12 +595,20 @@ impl Summary {
     }
 
     fn message(&self) -> String {
-        let mut msg = format!(
+        let mut msg = t!(
             "源成功 {}，源失败 {}；目标成功 {}，目标失败 {}",
-            self.sources_ok, self.sources_failed, self.destinations_ok, self.destinations_failed
+            "Sources: {} ok, {} failed; destinations: {} ok, {} failed",
+            self.sources_ok,
+            self.sources_failed,
+            self.destinations_ok,
+            self.destinations_failed
         );
         if self.sources_warned > 0 {
-            msg.push_str(&format!("；{} 个源有文件被跳过", self.sources_warned));
+            msg.push_str(&t!(
+                "；{} 个源有文件被跳过",
+                "; {} source(s) skipped some files",
+                self.sources_warned
+            ));
         }
         msg
     }
@@ -640,7 +664,7 @@ fn append_history(result: &BackupRunResult) -> Result<(), String> {
         .open(history_path()?)
         .map_err(|e| e.to_string())?;
     file.write_all(line.as_bytes())
-        .map_err(|e| format!("写入历史失败: {e}"))
+        .map_err(|e| t!("写入历史失败: {e}", "Failed to write history: {e}"))
 }
 
 #[cfg(test)]

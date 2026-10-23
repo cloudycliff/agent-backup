@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { formatRunTime, TRIGGER_LABELS } from "../format";
+import { formatRunTime, statusLabel, triggerLabel } from "../format";
+import { useI18n } from "../i18n";
 import type { HistoryEntry } from "../types";
 
 type Props = {
@@ -12,6 +13,7 @@ type Props = {
 };
 
 export default function HistoryTab({ version, busy, onRetry, onError }: Props) {
+  const { t } = useI18n();
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [onlyFailed, setOnlyFailed] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -26,8 +28,8 @@ export default function HistoryTab({ version, busy, onRetry, onError }: Props) {
     <section className="panel">
       <div className="row-between">
         <div>
-          <h2>备份记录</h2>
-          <p className="muted">成功静默；失败会系统通知。重试会按当前配置整次重跑。</p>
+          <h2>{t("history.title")}</h2>
+          <p className="muted">{t("history.subtitle")}</p>
         </div>
         <label className="check small">
           <input
@@ -35,13 +37,13 @@ export default function HistoryTab({ version, busy, onRetry, onError }: Props) {
             checked={onlyFailed}
             onChange={(e) => setOnlyFailed(e.target.checked)}
           />
-          仅失败
+          {t("history.onlyFailed")}
         </label>
       </div>
 
       {history.length === 0 ? (
         <p className="muted" style={{ marginTop: 12 }}>
-          暂无记录
+          {t("history.empty")}
         </p>
       ) : (
         <ul className="list" style={{ marginTop: 12 }}>
@@ -74,24 +76,25 @@ function HistoryItem({
   busy: boolean;
   onRetry: () => void;
 }) {
+  const { lang, t } = useI18n();
   const openUri = h.destinations?.find((d) => d.status === "ok" && d.uri)?.uri;
   return (
     <li style={{ alignItems: "flex-start" }}>
       <div style={{ flex: 1 }}>
         <div className="row-gap">
-          <strong>{formatRunTime(h.created_at)}</strong>
-          <span className="tag">{h.overall_status}</span>
-          <span className="tag">{TRIGGER_LABELS[h.trigger] ?? h.trigger}</span>
+          <strong>{formatRunTime(h.created_at, lang)}</strong>
+          <span className="tag">{statusLabel(t, h.overall_status)}</span>
+          <span className="tag">{triggerLabel(t, h.trigger)}</span>
         </div>
         <p className="muted">{h.message}</p>
         {expanded && (
           <div className="history-detail">
             <div>
-              <strong>源</strong>
+              <strong>{t("history.sources")}</strong>
               <ul>
                 {(h.sources ?? []).map((s) => (
                   <li key={s.key}>
-                    {s.label}: {s.status}
+                    {s.label}: {statusLabel(t, s.status)}
                     {s.archive ? ` · ${s.archive}` : ""}
                     {s.error ? ` · ${s.error}` : ""}
                     {s.warnings && s.warnings.length > 0 && (
@@ -106,11 +109,11 @@ function HistoryItem({
               </ul>
             </div>
             <div>
-              <strong>目标</strong>
+              <strong>{t("history.destinations")}</strong>
               <ul>
                 {(h.destinations ?? []).map((d, idx) => (
                   <li key={`${d.name}-${idx}`}>
-                    {d.name}: {d.status}
+                    {d.name}: {statusLabel(t, d.status)}
                     {d.error ? ` · ${d.error}` : ""}
                     {d.uri ? ` · ${d.uri}` : ""}
                   </li>
@@ -121,15 +124,15 @@ function HistoryItem({
         )}
       </div>
       <div className="row-gap" style={{ flexDirection: "column" }}>
-        <button onClick={onToggle}>{expanded ? "收起" : "详情"}</button>
+        <button onClick={onToggle}>{expanded ? t("history.hide") : t("history.details")}</button>
         {openUri && (
           <button onClick={() => invoke("open_path", { path: openUri })}>
-            打开目录
+            {t("history.openFolder")}
           </button>
         )}
         {h.overall_status !== "ok" && (
           <button className="primary" disabled={busy} onClick={onRetry}>
-            重试
+            {t("history.retry")}
           </button>
         )}
       </div>

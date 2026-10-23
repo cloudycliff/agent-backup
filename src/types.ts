@@ -1,3 +1,5 @@
+import type { Lang } from "./i18n";
+
 export type GroupView = { id: string; label: string; default_enabled: boolean };
 
 export type AgentView = {
@@ -59,6 +61,8 @@ export type Bootstrap = {
   presets_path: string;
   hostname: string;
   warnings: string[];
+  /** Resolved from `config.app.language`, which may be `auto`. */
+  language: Lang;
 };
 
 export type BackupResult = {

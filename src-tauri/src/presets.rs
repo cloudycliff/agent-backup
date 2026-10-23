@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::{user_presets_path, write_atomic, AppConfig};
+use crate::i18n::localized;
 
 const DEFAULT_PRESETS: &str = include_str!("../resources/agent-presets.default.json");
 /// Highest preset file `version` this build understands.
@@ -20,6 +22,9 @@ pub struct AgentPreset {
     pub key: String,
     #[serde(default)]
     pub label: Option<String>,
+    /// Translations of `label` keyed by language code, e.g. `{"en": "..."}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub disabled: bool,
     #[serde(default)]
@@ -45,6 +50,8 @@ pub struct RootSpec {
 pub struct PathGroup {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
     pub default_enabled: bool,
     pub include: Vec<String>,
 }
@@ -71,13 +78,14 @@ pub struct LoadedPresets {
 /// individual agents are reported as warnings so one bad entry can't lock the app.
 pub fn load_presets() -> Result<LoadedPresets, String> {
     let defaults: PresetFile =
-        serde_json::from_str(DEFAULT_PRESETS).map_err(|e| format!("内置预设损坏: {e}"))?;
+        serde_json::from_str(DEFAULT_PRESETS).map_err(|e| t!("内置预设损坏: {e}", "Built-in presets are corrupt: {e}"))?;
     let mut warnings = Vec::new();
     let presets = match load_user_presets() {
         Ok(Some(user)) => {
             if user.version > SUPPORTED_PRESET_VERSION {
-                warnings.push(format!(
+                warnings.push(t!(
                     "用户预设 version 为 {}，高于本版本支持的 {SUPPORTED_PRESET_VERSION}，新格式的字段可能不会生效",
+                    "User presets have version {}, newer than the supported {SUPPORTED_PRESET_VERSION}; newer fields may be ignored",
                     user.version
                 ));
             }
@@ -85,7 +93,7 @@ pub fn load_presets() -> Result<LoadedPresets, String> {
         }
         Ok(None) => defaults,
         Err(e) => {
-            warnings.push(format!("{e}，已改用内置预设"));
+            warnings.push(t!("{e}，已改用内置预设", "{e}; using built-in presets"));
             defaults
         }
     };
@@ -102,10 +110,11 @@ fn load_user_presets() -> Result<Option<PresetFile>, String> {
     if !user_path.exists() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(&user_path).map_err(|e| format!("读取用户预设失败: {e}"))?;
+    let raw = fs::read_to_string(&user_path)
+        .map_err(|e| t!("读取用户预设失败: {e}", "Failed to read user presets: {e}"))?;
     serde_json::from_str(&raw)
         .map(Some)
-        .map_err(|e| format!("解析用户预设失败: {e}"))
+        .map_err(|e| t!("解析用户预设失败: {e}", "Failed to parse user presets: {e}"))
 }
 
 /// Overrides built-in agents in place and appends new ones, so the list keeps the
@@ -115,7 +124,11 @@ fn merge_presets(mut defaults: PresetFile, user: PresetFile) -> PresetFile {
         match defaults.agents.iter_mut().find(|a| a.key == u.key) {
             Some(existing) => {
                 if u.label.is_some() {
+                    // Built-in translations describe the built-in label, not the user's.
                     existing.label = u.label;
+                    existing.labels = u.labels;
+                } else if u.labels.is_some() {
+                    existing.labels = u.labels;
                 }
                 existing.disabled = u.disabled;
                 if u.root.is_some() {
@@ -142,23 +155,36 @@ fn resolve_agents(presets: &PresetFile, warnings: &mut Vec<String>) -> Vec<Resol
     for agent in &presets.agents {
         let Some(root) = agent.root.clone() else {
             if !agent.disabled {
-                warnings.push(format!("Agent `{}` 缺少 root 定义，已跳过", agent.key));
+                warnings.push(t!(
+                    "Agent `{}` 缺少 root 定义，已跳过",
+                    "Agent `{}` has no root; skipped",
+                    agent.key
+                ));
             }
             continue;
         };
         let root_path = match resolve_root_path(&root) {
             Ok(p) => p,
             Err(e) => {
-                warnings.push(format!("Agent `{}`：{e}，已跳过", agent.key));
+                warnings.push(t!("Agent `{}`：{e}，已跳过", "Agent `{}`: {e}; skipped", agent.key));
                 continue;
             }
         };
-        let groups = agent.groups.clone().unwrap_or_default();
-        let hard_exclude = agent.hard_exclude.clone().unwrap_or_default();
-        let label = agent
-            .label
+        let groups = agent
+            .groups
             .clone()
-            .unwrap_or_else(|| agent.key.clone());
+            .unwrap_or_default()
+            .into_iter()
+            .map(|g| PathGroup {
+                label: localized(&g.label, &g.labels),
+                ..g
+            })
+            .collect();
+        let hard_exclude = agent.hard_exclude.clone().unwrap_or_default();
+        let label = localized(
+            agent.label.as_deref().unwrap_or(&agent.key),
+            &agent.labels.clone().unwrap_or_default(),
+        );
         let detect = agent.detect.clone().unwrap_or_default();
         let installed = root_path
             .as_deref()
@@ -191,7 +217,7 @@ fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
-        .ok_or_else(|| "无法解析用户主目录".to_string())
+        .ok_or_else(|| t!("无法解析用户主目录", "Can't resolve the home folder"))
 }
 
 fn app_data_dir() -> Result<PathBuf, String> {
@@ -214,7 +240,7 @@ pub fn resolve_root_path(root: &RootSpec) -> Result<Option<PathBuf>, String> {
     let base = match root.kind.as_str() {
         "home_subdir" => home_dir()?,
         "app_data" => app_data_dir()?,
-        other => return Err(format!("暂不支持 root.kind = {other}")),
+        other => return Err(t!("暂不支持 root.kind = {other}", "Unsupported root.kind = {other}")),
     };
     if let Some(env_name) = root
         .env_override
@@ -264,7 +290,8 @@ pub fn agent_enabled(cfg: &AppConfig, agent_key: &str) -> bool {
 pub fn reset_user_presets() -> Result<(), String> {
     let path = user_presets_path()?;
     if path.exists() {
-        fs::remove_file(&path).map_err(|e| format!("删除用户预设失败: {e}"))?;
+        fs::remove_file(&path)
+            .map_err(|e| t!("删除用户预设失败: {e}", "Failed to delete user presets: {e}"))?;
     }
     Ok(())
 }
@@ -351,6 +378,34 @@ mod tests {
         let cursor = merged.agents.iter().find(|a| a.key == "cursor").unwrap();
         assert_eq!(cursor.label.as_deref(), Some("My Cursor"));
         assert!(cursor.groups.is_some(), "unset fields keep built-in values");
+    }
+
+    #[test]
+    fn builtin_chinese_labels_have_english_translations() {
+        use crate::i18n::{localized_for, Lang};
+        let has_cjk = |s: &str| s.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
+        let presets: PresetFile = serde_json::from_str(DEFAULT_PRESETS).unwrap();
+        for agent in &presets.agents {
+            let labels = agent.labels.clone().unwrap_or_default();
+            let label = localized_for(Lang::En, agent.label.as_deref().unwrap_or(&agent.key), &labels);
+            assert!(!has_cjk(&label), "agent {} has no English label", agent.key);
+            for g in agent.groups.iter().flatten() {
+                let label = localized_for(Lang::En, &g.label, &g.labels);
+                assert!(!has_cjk(&label), "group {}/{} has no English label", agent.key, g.id);
+            }
+        }
+    }
+
+    #[test]
+    fn user_label_override_drops_builtin_translations() {
+        let defaults: PresetFile = serde_json::from_str(DEFAULT_PRESETS).unwrap();
+        let user: PresetFile =
+            serde_json::from_str(r#"{"version":1,"agents":[{"key":"cursor-editor","label":"Mine"}]}"#)
+                .unwrap();
+        let merged = merge_presets(defaults, user);
+        let editor = merged.agents.iter().find(|a| a.key == "cursor-editor").unwrap();
+        assert_eq!(editor.label.as_deref(), Some("Mine"));
+        assert!(editor.labels.is_none());
     }
 
     #[test]

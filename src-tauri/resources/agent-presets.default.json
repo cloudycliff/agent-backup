@@ -14,6 +14,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": [
             "mcp.json",
@@ -56,6 +57,7 @@
         {
           "id": "sessions",
           "label": "会话与项目状态",
+          "labels": { "en": "Sessions & project state" },
           "default_enabled": false,
           "include": ["projects/", "plans/", "ai-tracking/"]
         }
@@ -75,12 +77,14 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": ["cli-config.json", "agent-cli-state.json"]
         },
         {
           "id": "sessions",
           "label": "会话",
+          "labels": { "en": "Sessions" },
           "default_enabled": false,
           "include": ["chats/"]
         }
@@ -91,6 +95,7 @@
     {
       "key": "cursor-editor",
       "label": "Cursor 编辑器设置",
+      "labels": { "en": "Cursor editor settings" },
       "root": {
         "kind": "app_data",
         "win": "Cursor/User",
@@ -101,6 +106,7 @@
         {
           "id": "settings",
           "label": "设置 / 快捷键 / 代码片段",
+          "labels": { "en": "Settings / keybindings / snippets" },
           "default_enabled": true,
           "include": [
             "settings.json",
@@ -126,6 +132,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": ["settings.json", ".mcp.json", "CLAUDE.md"]
         },
@@ -156,6 +163,7 @@
         {
           "id": "sessions",
           "label": "会话与项目状态",
+          "labels": { "en": "Sessions & project state" },
           "default_enabled": false,
           "include": ["sessions/", "transcripts/", "projects/"]
         }
@@ -175,6 +183,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": [
             "config.toml",
@@ -209,6 +218,7 @@
         {
           "id": "sessions",
           "label": "会话",
+          "labels": { "en": "Sessions" },
           "default_enabled": false,
           "include": [
             "sessions/",
@@ -242,6 +252,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": [
             ".mcp.json",
@@ -281,6 +292,7 @@
         {
           "id": "sessions",
           "label": "会话与项目状态",
+          "labels": { "en": "Sessions & project state" },
           "default_enabled": false,
           "include": [
             "sessions/",
@@ -322,6 +334,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": ["mcp_config.json", "user_settings.pb"]
         },
@@ -355,6 +368,7 @@
     {
       "key": "windsurf-editor",
       "label": "Windsurf 编辑器设置",
+      "labels": { "en": "Windsurf editor settings" },
       "root": {
         "kind": "app_data",
         "win": "Windsurf/User",
@@ -365,6 +379,7 @@
         {
           "id": "settings",
           "label": "设置 / 快捷键 / 代码片段",
+          "labels": { "en": "Settings / keybindings / snippets" },
           "default_enabled": true,
           "include": [
             "settings.json",
@@ -390,6 +405,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": [
             "config.json",
@@ -414,6 +430,7 @@
         {
           "id": "sessions",
           "label": "会话",
+          "labels": { "en": "Sessions" },
           "default_enabled": false,
           "include": ["sessions/", "dev_data/"]
         }
@@ -433,12 +450,14 @@
         {
           "id": "config",
           "label": "配置与数据",
+          "labels": { "en": "Config & data" },
           "default_enabled": true,
           "include": ["data/", "settings/", "config/"]
         },
         {
           "id": "tasks",
           "label": "任务历史",
+          "labels": { "en": "Task history" },
           "default_enabled": false,
           "include": ["tasks/", "history/"]
         }
@@ -458,6 +477,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": ["settings/", "argv.json"]
         },
@@ -485,6 +505,7 @@
     {
       "key": "kiro-editor",
       "label": "Kiro 编辑器设置",
+      "labels": { "en": "Kiro editor settings" },
       "root": {
         "kind": "app_data",
         "win": "Kiro/User",
@@ -495,6 +516,7 @@
         {
           "id": "settings",
           "label": "设置 / 快捷键 / 代码片段",
+          "labels": { "en": "Settings / keybindings / snippets" },
           "default_enabled": true,
           "include": [
             "settings.json",
@@ -520,6 +542,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": [
             ".aider.conf.yml",
@@ -549,6 +572,7 @@
         {
           "id": "config",
           "label": "配置",
+          "labels": { "en": "Config" },
           "default_enabled": true,
           "include": ["settings.json", "config.json", "GEMINI.md"]
         },
@@ -561,6 +585,7 @@
         {
           "id": "history",
           "label": "历史（会话与检查点）",
+          "labels": { "en": "History (sessions & checkpoints)" },
           "default_enabled": false,
           "include": ["tmp/", "history/", "sessions/"]
         }
@@ -570,6 +595,7 @@
     {
       "key": "shared-agents",
       "label": "共享 Skills（~/.agents）",
+      "labels": { "en": "Shared skills (~/.agents)" },
       "root": {
         "kind": "home_subdir",
         "win": ".agents",

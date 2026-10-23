@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import ProgressCard from "../components/ProgressCard";
 import StatusLine from "../components/StatusLine";
 import { formatBytes } from "../format";
+import { useI18n } from "../i18n";
 import type {
   AgentView,
   Bootstrap,
@@ -31,6 +32,7 @@ export default function BackupTab({
   withRefresh,
   onBackup,
 }: Props) {
+  const { t } = useI18n();
   const enabledDestCount = boot.config.destinations.filter((d) => d.enabled).length;
   const missingPassword =
     boot.config.encryption.enabled && !boot.config.encryption.password;
@@ -46,28 +48,27 @@ export default function BackupTab({
     <section className="panel">
       <div className="row-between">
         <div>
-          <h2>备份源</h2>
-          <p className="muted">密钥与缓存默认排除；会话默认不勾选。</p>
+          <h2>{t("backup.title")}</h2>
+          <p className="muted">{t("backup.subtitle")}</p>
         </div>
         <button
           className="primary"
           disabled={busy || enabledDestCount === 0 || missingPassword}
           onClick={onBackup}
         >
-          {busy ? "备份中…" : "立即备份"}
+          {busy ? t("backup.running") : t("backup.now")}
         </button>
       </div>
-      {enabledDestCount === 0 && (
-        <p className="hint">尚未配置目标。请先到「目标」添加一个本地目录。</p>
-      )}
-      {missingPassword && (
-        <p className="hint">已开启加密但未设置密码。请到「设置」填写密码后再备份。</p>
-      )}
+      {enabledDestCount === 0 && <p className="hint">{t("backup.noDestination")}</p>}
+      {missingPassword && <p className="hint">{t("backup.missingPassword")}</p>}
       {status && <StatusLine status={status} />}
       <p className="muted">
-        将写入 {enabledDestCount} 个启用目标
+        {t("backup.willWrite", { count: enabledDestCount })}
         {estimate
-          ? ` · 预估 ${estimate.file_count} 个文件 / ${formatBytes(estimate.bytes)}`
+          ? t("backup.estimate", {
+              files: estimate.file_count,
+              size: formatBytes(estimate.bytes),
+            })
           : ""}
       </p>
       {progress && <ProgressCard progress={progress} />}
@@ -78,11 +79,11 @@ export default function BackupTab({
       </div>
 
       <div className="section-head">
-        <h3>自定义文件夹</h3>
-        <button onClick={addCustomSource}>添加文件夹</button>
+        <h3>{t("backup.customTitle")}</h3>
+        <button onClick={addCustomSource}>{t("backup.addFolder")}</button>
       </div>
       {boot.config.sources.custom.length === 0 ? (
-        <p className="muted">暂无自定义源</p>
+        <p className="muted">{t("backup.noCustom")}</p>
       ) : (
         <ul className="list">
           {boot.config.sources.custom.map((c) => (
@@ -111,7 +112,7 @@ export default function BackupTab({
                   withRefresh(() => invoke("remove_custom_source", { id: c.id }))
                 }
               >
-                删除
+                {t("common.delete")}
               </button>
             </li>
           ))}
@@ -128,6 +129,7 @@ function AgentCard({
   agent: AgentView;
   withRefresh: WithRefresh;
 }) {
+  const { t } = useI18n();
   return (
     <article className={agent.installed ? "card" : "card dim"}>
       <div className="row-between">
@@ -147,7 +149,9 @@ function AgentCard({
           />
           <strong>{agent.label}</strong>
         </label>
-        <span className="tag">{agent.installed ? "已安装" : "未检测到"}</span>
+        <span className="tag">
+          {agent.installed ? t("agent.installed") : t("agent.notDetected")}
+        </span>
       </div>
       {agent.root_path && <p className="path">{agent.root_path}</p>}
       {agent.installed && (

@@ -25,13 +25,16 @@ fn join_key(prefix: &str, parts: &[&str]) -> String {
 
 fn build_client(s3: &S3Destination) -> Result<Client, String> {
     if s3.endpoint.trim().is_empty() {
-        return Err("S3 endpoint 不能为空".into());
+        return Err(t!("S3 endpoint 不能为空", "S3 endpoint is required"));
     }
     if s3.bucket.trim().is_empty() {
-        return Err("S3 bucket 不能为空".into());
+        return Err(t!("S3 bucket 不能为空", "S3 bucket is required"));
     }
     if s3.access_key.trim().is_empty() || s3.secret_key.trim().is_empty() {
-        return Err("S3 Access Key / Secret Key 不能为空".into());
+        return Err(t!(
+            "S3 Access Key / Secret Key 不能为空",
+            "S3 Access Key and Secret Key are required"
+        ));
     }
     let region = if s3.region.trim().is_empty() {
         "auto".to_string()
@@ -82,10 +85,16 @@ pub fn test_connection(s3: &S3Destination) -> Result<String, String> {
             .body(ByteStream::from_static(b"agent-backup write test"))
             .send()
             .await
-            .map_err(|e| format!("写入测试失败: {}", describe(e)))?;
-        let mut msg = format!("写入测试成功：s3://{bucket}/{key}");
+            .map_err(|e| t!("写入测试失败: {}", "Write test failed: {}", describe(e)))?;
+        let mut msg = t!(
+            "写入测试成功：s3://{bucket}/{key}",
+            "Write test passed: s3://{bucket}/{key}"
+        );
         if client.delete_object().bucket(bucket).key(&key).send().await.is_err() {
-            msg.push_str("（测试文件未能删除，可手动删除；只有上传权限也能正常备份）");
+            msg.push_str(&t!(
+                "（测试文件未能删除，可手动删除；只有上传权限也能正常备份）",
+                " (the test file couldn't be deleted; remove it manually. Upload-only access is enough for backups)"
+            ));
         }
         Ok(msg)
     })
@@ -106,7 +115,7 @@ pub fn upload_archives(
             let key = format!("{}/{}", base, p.archive_name);
             let body = ByteStream::from_path(&p.archive_path)
                 .await
-                .map_err(|e| format!("读取 {} 失败: {e}", p.archive_name))?;
+                .map_err(|e| t!("读取 {} 失败: {e}", "Failed to read {}: {e}", p.archive_name))?;
             client
                 .put_object()
                 .bucket(bucket)
@@ -115,7 +124,9 @@ pub fn upload_archives(
                 .content_type("application/zip")
                 .send()
                 .await
-                .map_err(|e| format!("上传 {} 失败: {}", p.archive_name, describe(e)))?;
+                .map_err(|e| {
+                    t!("上传 {} 失败: {}", "Failed to upload {}: {}", p.archive_name, describe(e))
+                })?;
         }
 
         Ok(format!("s3://{bucket}/{base}"))
@@ -143,7 +154,7 @@ pub fn upload_manifest(
             .content_type("application/json")
             .send()
             .await
-            .map_err(|e| format!("上传 manifest 失败: {}", describe(e)))?;
+            .map_err(|e| t!("上传 manifest 失败: {}", "Failed to upload manifest: {}", describe(e)))?;
         Ok(())
     })
 }

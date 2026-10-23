@@ -87,6 +87,7 @@
 |---|---|
 | `key` | 稳定 ID，用于 config 勾选与 zip 文件名 |
 | `label` | UI 显示名 |
+| `labels` | 可选。`label` 的翻译，按语言代码，例如 `{"en": "My Tool"}`；当前语言没有翻译时显示 `label`。`groups[].labels` 同理。覆盖内置 Agent 的 `label` 时，内置的翻译不再使用 |
 | `disabled` | `true` 时不探测、不显示 |
 | `root.kind` | `home_subdir`：相对用户主目录；`app_data`：相对系统应用数据目录（Windows `%APPDATA%`，macOS `~/Library/Application Support`） |
 | `root.win` / `root.mac` | 相对上述基准目录的子路径；留空即基准目录本身 |
@@ -113,6 +114,7 @@
 - `schedule.enabled` + `schedule.time_local`（本地 `HH:mm`）：托盘常驻时每日到点备份；错过的时间点（睡眠、关机、应用未运行）会在下次运行时补跑一次，不会累计补多次
 - 配置文件采用"写临时文件再改名"的方式保存；缺失的字段按默认值补齐，旧版配置可直接使用
 - `app.start_on_login`：登录时启动
+- `app.language`：界面语言，`auto`（跟随系统，默认）、`zh-CN` 或 `en`，也可在设置页切换。托盘菜单、通知和错误信息一起切换；已有的历史记录保留写入时的语言
 - `sources.custom[]`：自定义文件夹源，不依赖 presets
 
 自定义源示例：

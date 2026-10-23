@@ -7,6 +7,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 import "./App.css";
 import { formatRunTime } from "./format";
+import { browserLang, I18nProvider, translator, type MessageKey } from "./i18n";
 import BackupTab from "./tabs/BackupTab";
 import DestinationsTab from "./tabs/DestinationsTab";
 import HistoryTab from "./tabs/HistoryTab";
@@ -22,11 +23,11 @@ import type {
   WithRefresh,
 } from "./types";
 
-const TABS: ReadonlyArray<readonly [Tab, string]> = [
-  ["backup", "备份"],
-  ["destinations", "目标"],
-  ["history", "记录"],
-  ["settings", "设置"],
+const TABS: ReadonlyArray<readonly [Tab, MessageKey]> = [
+  ["backup", "tab.backup"],
+  ["destinations", "tab.destinations"],
+  ["history", "tab.history"],
+  ["settings", "tab.settings"],
 ];
 
 export default function App() {
@@ -40,6 +41,12 @@ export default function App() {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
+  const lang = boot?.language ?? browserLang();
+  const t = translator(lang);
+
+  useEffect(() => {
+    document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  }, [lang]);
 
   const estimateSeq = useRef(0);
   const refreshEstimate = useCallback(async () => {
@@ -128,90 +135,94 @@ export default function App() {
       await refreshAfterRun().catch(() => undefined);
     }
   }
-  const runBackup = () => startBackup("run_backup_now", "准备中…");
-  const retryBackup = () => startBackup("retry_backup", "准备重跑…");
+  const runBackup = () => startBackup("run_backup_now", t("app.preparing"));
+  const retryBackup = () => startBackup("retry_backup", t("app.preparingRetry"));
 
   if (!boot) {
     return (
       <div className="shell">
-        <p className="muted">加载中…</p>
+        <p className="muted">{t("app.loading")}</p>
         {error && <p className="error">{error}</p>}
       </div>
     );
   }
 
   return (
-    <div className="shell">
-      <header className="top">
-        <div>
-          <h1>Agent Backup</h1>
-          <p className="muted">
-            主机 <code>{boot.hostname}</code> · 单向备份
-          </p>
-        </div>
-        <nav className="tabs">
-          {TABS.map(([id, label]) => (
-            <button
-              key={id}
-              className={tab === id ? "tab active" : "tab"}
-              onClick={() => setTab(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-      </header>
-
-      {error && <div className="banner error-banner">{error}</div>}
-      {boot.warnings.length > 0 && (
-        <div className="banner error-banner">
-          预设有问题，以下内容已跳过：
-          <ul>
-            {boot.warnings.map((w) => (
-              <li key={w}>{w}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {latestFailure && (
-        <div className="banner error-banner row-between">
+    <I18nProvider lang={lang}>
+      <div className="shell">
+        <header className="top">
           <div>
-            最近一次备份未完全成功（{formatRunTime(latestFailure.created_at)}）：
-            {latestFailure.message}
+            <h1>Agent Backup</h1>
+            <p className="muted">
+              {t("app.host")} <code>{boot.hostname}</code> · {t("app.oneWay")}
+            </p>
           </div>
-          <div className="row-gap">
-            <button onClick={() => setTab("history")}>去处理</button>
-            <button className="primary" disabled={busy} onClick={retryBackup}>
-              {busy ? "重试中…" : "整次重跑"}
-            </button>
-          </div>
-        </div>
-      )}
-      {lastResult && lastResult.overall_status === "ok" && (
-        <div className="banner ok-banner">备份完成：{lastResult.message}</div>
-      )}
+          <nav className="tabs">
+            {TABS.map(([id, labelKey]) => (
+              <button
+                key={id}
+                className={tab === id ? "tab active" : "tab"}
+                onClick={() => setTab(id)}
+              >
+                {t(labelKey)}
+              </button>
+            ))}
+          </nav>
+        </header>
 
-      {tab === "backup" && (
-        <BackupTab
-          boot={boot}
-          busy={busy}
-          estimate={estimate}
-          progress={progress}
-          status={status}
-          withRefresh={withRefresh}
-          onBackup={runBackup}
-        />
-      )}
-      {tab === "destinations" && <DestinationsTab boot={boot} withRefresh={withRefresh} />}
-      {tab === "history" && (
-        <HistoryTab
-          version={historyVersion}
-          busy={busy}
-          onRetry={retryBackup}
-          onError={setError}
-        />
-      )}
-      {tab === "settings" && <SettingsTab boot={boot} withRefresh={withRefresh} />}
-    </div>
+        {error && <div className="banner error-banner">{error}</div>}
+        {boot.warnings.length > 0 && (
+          <div className="banner error-banner">
+            {t("app.presetWarnings")}
+            <ul>
+              {boot.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {latestFailure && (
+          <div className="banner error-banner row-between">
+            <div>
+              {t("app.latestFailure", { time: formatRunTime(latestFailure.created_at, lang) })}
+              {latestFailure.message}
+            </div>
+            <div className="row-gap">
+              <button onClick={() => setTab("history")}>{t("app.review")}</button>
+              <button className="primary" disabled={busy} onClick={retryBackup}>
+                {busy ? t("app.retrying") : t("app.runAgain")}
+              </button>
+            </div>
+          </div>
+        )}
+        {lastResult && lastResult.overall_status === "ok" && (
+          <div className="banner ok-banner">
+            {t("app.backupDone", { message: lastResult.message })}
+          </div>
+        )}
+
+        {tab === "backup" && (
+          <BackupTab
+            boot={boot}
+            busy={busy}
+            estimate={estimate}
+            progress={progress}
+            status={status}
+            withRefresh={withRefresh}
+            onBackup={runBackup}
+          />
+        )}
+        {tab === "destinations" && <DestinationsTab boot={boot} withRefresh={withRefresh} />}
+        {tab === "history" && (
+          <HistoryTab
+            version={historyVersion}
+            busy={busy}
+            onRetry={retryBackup}
+            onError={setError}
+          />
+        )}
+        {tab === "settings" && <SettingsTab boot={boot} withRefresh={withRefresh} />}
+      </div>
+    </I18nProvider>
   );
 }

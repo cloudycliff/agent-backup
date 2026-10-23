@@ -1,28 +1,34 @@
-import { formatRunTime, TRIGGER_LABELS } from "../format";
+import { formatRunTime, triggerLabel } from "../format";
+import { useI18n } from "../i18n";
 import type { StatusView } from "../types";
 
 export default function StatusLine({ status }: { status: StatusView }) {
+  const { lang, t } = useI18n();
   const last = status.last_success;
   const next = status.next_run;
   return (
     <div className="status-line">
       <span>
-        上次成功备份：
+        {t("statusLine.lastSuccess")}
         {last ? (
           <>
-            {formatRunTime(last.created_at)}
+            {formatRunTime(last.created_at, lang)}
             {" · "}
-            {TRIGGER_LABELS[last.trigger] ?? last.trigger}
-            {last.overall_status === "partial" && "（部分成功）"}
-            {last.destinations.length === 0 && "（内容无变化）"}
+            {triggerLabel(t, last.trigger)}
+            {last.overall_status === "partial" && t("statusLine.partial")}
+            {last.destinations.length === 0 && t("statusLine.unchanged")}
           </>
         ) : (
-          "暂无"
+          t("statusLine.none")
         )}
       </span>
       <span>
-        下次定时：
-        {!next ? "未开启" : next.overdue ? "已错过，即将补跑" : next.at}
+        {t("statusLine.nextRun")}
+        {!next
+          ? t("statusLine.off")
+          : next.overdue
+            ? t("statusLine.overdue")
+            : next.at}
       </span>
     </div>
   );

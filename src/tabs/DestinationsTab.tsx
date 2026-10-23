@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useI18n, type MessageKey } from "../i18n";
 import type { Bootstrap, Destination, WithRefresh } from "../types";
 
 const EMPTY_S3_FORM = {
@@ -13,15 +14,18 @@ const EMPTY_S3_FORM = {
   secretKey: "",
 };
 
-const S3_FIELDS = [
-  ["name", "显示名", "text"],
-  ["endpoint", "Endpoint", "text"],
-  ["region", "Region", "text"],
-  ["bucket", "Bucket", "text"],
-  ["prefix", "Prefix（可选）", "text"],
-  ["accessKey", "Access Key", "text"],
-  ["secretKey", "Secret Key", "password"],
-] as const;
+/** S3 terms stay untranslated; only fields with a `MessageKey` label are localized. */
+const S3_FIELDS: ReadonlyArray<
+  readonly [keyof typeof EMPTY_S3_FORM, MessageKey | { text: string }, "text" | "password"]
+> = [
+  ["name", "dest.fieldName", "text"],
+  ["endpoint", { text: "Endpoint" }, "text"],
+  ["region", { text: "Region" }, "text"],
+  ["bucket", { text: "Bucket" }, "text"],
+  ["prefix", "dest.fieldPrefix", "text"],
+  ["accessKey", { text: "Access Key" }, "text"],
+  ["secretKey", { text: "Secret Key" }, "password"],
+];
 
 type LocalEdit = { id: string; name: string; rootPath: string };
 
@@ -33,6 +37,7 @@ async function pickDirectory() {
 }
 
 export default function DestinationsTab({ boot, withRefresh }: Props) {
+  const { t } = useI18n();
   const [showS3Form, setShowS3Form] = useState(false);
   /** Set while the S3 form edits an existing destination instead of adding one. */
   const [editingS3Id, setEditingS3Id] = useState<string | null>(null);
@@ -43,7 +48,7 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
   async function addLocal() {
     const rootPath = await pickDirectory();
     if (!rootPath) return;
-    await withRefresh(() => invoke("add_local_destination", { name: "本地目录", rootPath }));
+    await withRefresh(() => invoke("add_local_destination", { name: t("dest.localDefaultName"), rootPath }));
   }
 
   function closeS3Form() {
@@ -105,37 +110,35 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
     <section className="panel">
       <div className="row-between">
         <div>
-          <h2>备份目标</h2>
-          <p className="muted">
-            支持多个目标：本地目录 + S3 兼容存储。一次备份会尽力写入全部启用目标。
-          </p>
+          <h2>{t("dest.title")}</h2>
+          <p className="muted">{t("dest.subtitle")}</p>
         </div>
         <div className="row-gap">
           <button className="primary" onClick={addLocal}>
-            添加本地目录
+            {t("dest.addLocal")}
           </button>
           <button onClick={() => (showS3Form ? closeS3Form() : setShowS3Form(true))}>
-            {showS3Form ? "收起 S3 表单" : "添加 S3"}
+            {showS3Form ? t("dest.hideS3") : t("dest.addS3")}
           </button>
         </div>
       </div>
 
       {showS3Form && (
         <div className="card" style={{ marginTop: 14 }}>
-          <h3>{editingS3Id ? "编辑 S3 目标" : "S3 兼容目标"}</h3>
+          <h3>{editingS3Id ? t("dest.editS3") : t("dest.newS3")}</h3>
           <p className="muted">
-            适用于 AWS S3、Cloudflare R2、MinIO、部分 OSS。默认 path-style。
-            {editingS3Id && "修改 Endpoint / Bucket / Prefix 后，下一次定时备份会完整写入新位置。"}
+            {t("dest.s3Hint")}
+            {editingS3Id && t("dest.s3EditHint")}
           </p>
           <div className="form-grid">
             {S3_FIELDS.map(([key, label, type]) => (
               <label key={key} className="field">
-                <span>{label}</span>
+                <span>{typeof label === "string" ? t(label) : label.text}</span>
                 <input
                   type={type}
                   value={s3Form[key]}
                   placeholder={
-                    key === "secretKey" && editingS3Id ? "留空表示不修改" : undefined
+                    key === "secretKey" && editingS3Id ? t("dest.secretKeep") : undefined
                   }
                   onChange={(e) =>
                     setS3Form((prev) => ({ ...prev, [key]: e.target.value }))
@@ -145,11 +148,11 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
             ))}
           </div>
           <div className="row-gap" style={{ marginTop: 12 }}>
-            <button onClick={testS3}>测试写入</button>
+            <button onClick={testS3}>{t("dest.testWrite")}</button>
             <button className="primary" onClick={saveS3}>
-              {editingS3Id ? "保存修改" : "保存 S3 目标"}
+              {editingS3Id ? t("dest.saveChanges") : t("dest.saveS3")}
             </button>
-            {editingS3Id && <button onClick={closeS3Form}>取消</button>}
+            {editingS3Id && <button onClick={closeS3Form}>{t("common.cancel")}</button>}
           </div>
           {s3TestMsg && (
             <p className="muted" style={{ marginTop: 8 }}>
@@ -160,7 +163,7 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
       )}
 
       {boot.config.destinations.length === 0 ? (
-        <p className="hint">还没有目标。添加后即可开始备份。</p>
+        <p className="hint">{t("dest.empty")}</p>
       ) : (
         <ul className="list" style={{ marginTop: 14 }}>
           {boot.config.destinations.map((d) =>
@@ -179,16 +182,16 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
                         if (rootPath) setLocalEdit({ ...localEdit, rootPath });
                       }}
                     >
-                      更换目录
+                      {t("dest.changeFolder")}
                     </button>
                   </div>
                   <div className="path">{localEdit.rootPath}</div>
                 </div>
                 <div className="row-gap">
                   <button className="primary" onClick={() => saveLocal(localEdit)}>
-                    保存
+                    {t("common.save")}
                   </button>
-                  <button onClick={() => setLocalEdit(null)}>取消</button>
+                  <button onClick={() => setLocalEdit(null)}>{t("common.cancel")}</button>
                 </div>
               </li>
             ) : (
@@ -205,9 +208,7 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
                           d.s3.prefix ? ` / ${d.s3.prefix}` : ""
                         }`}
                   </div>
-                  <div className="muted">
-                    实际写入：…/backups/{boot.hostname}/&lt;timestamp&gt;/
-                  </div>
+                  <div className="muted">{t("dest.writesTo", { host: boot.hostname })}</div>
                 </div>
                 <div className="row-gap">
                   <label className="check small">
@@ -223,10 +224,10 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
                         )
                       }
                     />
-                    启用
+                    {t("dest.enabled")}
                   </label>
                   <button onClick={() => (d.type === "local" ? editLocal(d) : editS3(d))}>
-                    编辑
+                    {t("common.edit")}
                   </button>
                   <button
                     className="danger"
@@ -234,7 +235,7 @@ export default function DestinationsTab({ boot, withRefresh }: Props) {
                       withRefresh(() => invoke("remove_destination", { id: d.id }))
                     }
                   >
-                    删除
+                    {t("common.delete")}
                   </button>
                 </div>
               </li>

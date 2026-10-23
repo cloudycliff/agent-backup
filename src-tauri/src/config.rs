@@ -135,7 +135,7 @@ impl Default for AppSettings {
             hostname_override: None,
             start_on_login: false,
             minimize_to_tray: true,
-            language: "zh-CN".into(),
+            language: "auto".into(),
         }
     }
 }
@@ -190,18 +190,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(".tmp");
     let tmp = path.with_file_name(tmp_name);
-    fs::write(&tmp, bytes).map_err(|e| format!("写入 {} 失败: {e}", tmp.display()))?;
-    fs::rename(&tmp, path).map_err(|e| format!("替换 {} 失败: {e}", path.display()))
+    fs::write(&tmp, bytes)
+        .map_err(|e| t!("写入 {} 失败: {e}", "Failed to write {}: {e}", tmp.display()))?;
+    fs::rename(&tmp, path)
+        .map_err(|e| t!("替换 {} 失败: {e}", "Failed to replace {}: {e}", path.display()))
 }
 
 pub fn config_dir() -> Result<PathBuf, String> {
     let dir = match std::env::var_os("AGENT_BACKUP_CONFIG_DIR").filter(|v| !v.is_empty()) {
         Some(custom) => PathBuf::from(custom),
         None => dirs_home()
-            .ok_or_else(|| "无法解析用户主目录".to_string())?
+            .ok_or_else(|| t!("无法解析用户主目录", "Can't resolve the home folder"))?
             .join(".agent-backup"),
     };
-    fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| t!("创建配置目录失败: {e}", "Failed to create config folder: {e}"))?;
     Ok(dir)
 }
 
@@ -230,13 +232,14 @@ pub fn load_config() -> Result<AppConfig, String> {
         save_config(&cfg)?;
         return Ok(cfg);
     }
-    let raw = fs::read_to_string(&path).map_err(|e| format!("读取配置失败: {e}"))?;
-    serde_json::from_str(&raw).map_err(|e| format!("解析配置失败: {e}"))
+    let raw = fs::read_to_string(&path)
+        .map_err(|e| t!("读取配置失败: {e}", "Failed to read config: {e}"))?;
+    serde_json::from_str(&raw).map_err(|e| t!("解析配置失败: {e}", "Failed to parse config: {e}"))
 }
 
 pub fn save_config(cfg: &AppConfig) -> Result<(), String> {
     let raw = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    write_atomic(&config_path()?, raw.as_bytes()).map_err(|e| format!("写入配置失败: {e}"))
+    write_atomic(&config_path()?, raw.as_bytes()).map_err(|e| t!("写入配置失败: {e}", "Failed to save config: {e}"))
 }
 
 /// Fills in toggles for agents/groups the config has not seen yet. Returns whether anything changed.
@@ -336,7 +339,7 @@ pub fn open_path_in_explorer(path: &Path) -> Result<(), String> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = path;
-        Err("当前平台暂不支持打开目录".into())
+        Err(t!("当前平台暂不支持打开目录", "Opening folders isn't supported on this platform"))
     }
 }
 

@@ -9,16 +9,16 @@ pub fn notify_and_emit(app: &AppHandle, result: &BackupRunResult) {
         return;
     }
     let title = if result.overall_status == Status::Partial {
-        "备份部分失败"
+        t!("备份部分失败", "Backup partly failed")
     } else {
-        "备份失败"
+        t!("备份失败", "Backup failed")
     };
-    show(app, title, &result.message);
+    show(app, &title, &result.message);
 }
 
 pub fn notify_error(app: &AppHandle, err: &str) {
     let _ = app.emit("backup-finished", BackupRunResult::failure(err));
-    show(app, "备份失败", err);
+    show(app, &t!("备份失败", "Backup failed"), err);
 }
 
 fn show(app: &AppHandle, title: &str, body: &str) {

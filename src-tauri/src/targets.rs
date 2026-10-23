@@ -85,12 +85,12 @@ fn write_dir_atomically(target: &Path, packed: &[PackedSource]) -> Result<String
     partial_name.push(".partial");
     let partial = target.with_file_name(partial_name);
     let copy_all = || -> Result<(), String> {
-        fs::create_dir_all(&partial).map_err(|e| format!("创建目标目录失败: {e}"))?;
+        fs::create_dir_all(&partial).map_err(|e| t!("创建目标目录失败: {e}", "Failed to create destination folder: {e}"))?;
         for p in packed.iter().filter(|p| p.status == Status::Ok) {
             fs::copy(&p.archive_path, partial.join(&p.archive_name))
-                .map_err(|e| format!("复制 {} 失败: {e}", p.archive_name))?;
+                .map_err(|e| t!("复制 {} 失败: {e}", "Failed to copy {}: {e}", p.archive_name))?;
         }
-        fs::rename(&partial, target).map_err(|e| format!("完成目标目录失败: {e}"))
+        fs::rename(&partial, target).map_err(|e| t!("完成目标目录失败: {e}", "Failed to finalize destination folder: {e}"))
     };
     if let Err(e) = copy_all() {
         let _ = fs::remove_dir_all(&partial);

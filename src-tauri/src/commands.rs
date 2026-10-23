@@ -24,6 +24,8 @@ pub struct BootstrapState {
     pub presets_path: String,
     pub hostname: String,
     pub warnings: Vec<String>,
+    /// Resolved UI language (`zh` or `en`); `config.app.language` may be `auto`.
+    pub language: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,7 +99,21 @@ pub fn get_bootstrap() -> Result<BootstrapState, String> {
         presets_path: user_presets_path()?.to_string_lossy().to_string(),
         hostname,
         warnings: loaded.warnings,
+        language: crate::i18n::current().code(),
     })
+}
+
+#[tauri::command]
+pub fn set_language(app: tauri::AppHandle, language: String) -> Result<BootstrapState, String> {
+    if !matches!(language.as_str(), "auto" | "zh-CN" | "en") {
+        return Err(t!("不支持的语言：{language}", "Unsupported language: {language}"));
+    }
+    let mut cfg = load_config()?;
+    cfg.app.language = language;
+    save_config(&cfg)?;
+    crate::i18n::apply(&cfg);
+    crate::tray::relabel(&app);
+    get_bootstrap()
 }
 
 #[tauri::command]
@@ -111,7 +127,7 @@ pub fn add_local_destination(name: String, root_path: String) -> Result<Bootstra
     let mut cfg = load_config()?;
     cfg.destinations.push(new_destination(
         name,
-        "本地目录",
+        &t!("本地目录", "Local folder"),
         DestinationKind::Local {
             local: LocalDestination { root_path },
         },
@@ -144,10 +160,10 @@ pub fn add_s3_destination(
     secret_key: String,
 ) -> Result<BootstrapState, String> {
     if endpoint.trim().is_empty() || bucket.trim().is_empty() {
-        return Err("Endpoint 与 Bucket 必填".into());
+        return Err(t!("Endpoint 与 Bucket 必填", "Endpoint and Bucket are required"));
     }
     if access_key.trim().is_empty() || secret_key.trim().is_empty() {
-        return Err("Access Key / Secret Key 必填".into());
+        return Err(t!("Access Key / Secret Key 必填", "Access Key and Secret Key are required"));
     }
     let mut cfg = load_config()?;
     cfg.destinations.push(new_destination(
@@ -175,7 +191,7 @@ where
 {
     tauri::async_runtime::spawn_blocking(f)
         .await
-        .map_err(|e| format!("后台任务异常: {e}"))?
+        .map_err(|e| t!("后台任务异常: {e}", "Background task failed: {e}"))?
 }
 
 /// `id` lets the edit form test without retyping the secret: an empty secret key
@@ -222,7 +238,7 @@ fn find_destination<'a>(cfg: &'a mut AppConfig, id: &str) -> Result<&'a mut Dest
     cfg.destinations
         .iter_mut()
         .find(|d| d.id == id)
-        .ok_or_else(|| "目标不存在".to_string())
+        .ok_or_else(|| t!("目标不存在", "Destination not found"))
 }
 
 /// A destination whose location changes gets a new id, so history never treats
@@ -234,12 +250,12 @@ pub fn update_local_destination(
     root_path: String,
 ) -> Result<BootstrapState, String> {
     if root_path.trim().is_empty() {
-        return Err("目录不能为空".into());
+        return Err(t!("目录不能为空", "Folder is required"));
     }
     let mut cfg = load_config()?;
     let dest = find_destination(&mut cfg, &id)?;
     let DestinationKind::Local { local } = &mut dest.kind else {
-        return Err("该目标不是本地目录".into());
+        return Err(t!("该目标不是本地目录", "This destination is not a local folder"));
     };
     if local.root_path != root_path {
         local.root_path = root_path;
@@ -265,15 +281,15 @@ pub fn update_s3_destination(
     secret_key: String,
 ) -> Result<BootstrapState, String> {
     if endpoint.trim().is_empty() || bucket.trim().is_empty() {
-        return Err("Endpoint 与 Bucket 必填".into());
+        return Err(t!("Endpoint 与 Bucket 必填", "Endpoint and Bucket are required"));
     }
     if access_key.trim().is_empty() {
-        return Err("Access Key 必填".into());
+        return Err(t!("Access Key 必填", "Access Key is required"));
     }
     let mut cfg = load_config()?;
     let dest = find_destination(&mut cfg, &id)?;
     let DestinationKind::S3 { s3 } = &mut dest.kind else {
-        return Err("该目标不是 S3".into());
+        return Err(t!("该目标不是 S3", "This destination is not S3"));
     };
     let moved = s3.endpoint.trim() != endpoint.trim()
         || s3.bucket.trim() != bucket.trim()
@@ -312,7 +328,8 @@ pub fn update_exclusions(
 fn normalize_globs(list: &[String]) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     for pattern in list.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
-        globset::Glob::new(pattern).map_err(|e| format!("规则 `{pattern}` 无效: {e}"))?;
+        globset::Glob::new(pattern)
+            .map_err(|e| t!("规则 `{pattern}` 无效: {e}", "Invalid pattern `{pattern}`: {e}"))?;
         if !out.iter().any(|p| p == pattern) {
             out.push(pattern.to_string());
         }
@@ -348,7 +365,10 @@ pub fn set_destination_enabled(id: String, enabled: bool) -> Result<BootstrapSta
 pub fn add_custom_source(label: String, path: String) -> Result<BootstrapState, String> {
     let mut cfg = load_config()?;
     if crate::packager::is_within(std::path::Path::new(&path), &backup_output_dirs(&cfg)) {
-        return Err("该文件夹位于备份目标的 backups 目录内，不能作为备份源".into());
+        return Err(t!(
+            "该文件夹位于备份目标的 backups 目录内，不能作为备份源",
+            "This folder is inside a destination's backups folder and can't be a backup source"
+        ));
     }
     cfg.sources.custom.push(CustomSource {
         id: format!("custom_{}", uuid::Uuid::new_v4()),
@@ -372,7 +392,7 @@ pub fn set_custom_source_enabled(id: String, enabled: bool) -> Result<BootstrapS
         .custom
         .iter_mut()
         .find(|c| c.id == id)
-        .ok_or_else(|| "自定义源不存在".to_string())?;
+        .ok_or_else(|| t!("自定义源不存在", "Custom source not found"))?;
     source.enabled = enabled;
     save_config(&cfg)?;
     get_bootstrap()
@@ -506,7 +526,10 @@ pub fn open_path(path: String) -> Result<(), String> {
     allowed.push(config_dir()?);
     let path = PathBuf::from(path);
     if !is_openable(&path, &allowed) {
-        return Err("只能打开备份目标或配置目录内的文件夹".into());
+        return Err(t!(
+            "只能打开备份目标或配置目录内的文件夹",
+            "Only folders inside a backup destination or the config folder can be opened"
+        ));
     }
     open_path_in_explorer(&path)
 }
@@ -521,7 +544,11 @@ fn is_openable(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
 
 #[tauri::command]
 pub fn get_docs_hint() -> Result<String, String> {
-    Ok(include_str!("../resources/CONFIGURATION.md").to_string())
+    Ok(match crate::i18n::current() {
+        crate::i18n::Lang::Zh => include_str!("../resources/CONFIGURATION.md"),
+        crate::i18n::Lang::En => include_str!("../resources/CONFIGURATION.en.md"),
+    }
+    .to_string())
 }
 
 #[tauri::command]
@@ -536,7 +563,7 @@ pub fn update_encryption(
         cfg.encryption.password = Some(pw).filter(|p| !p.trim().is_empty());
     }
     if cfg.encryption.enabled && cfg.encryption.password.is_none() {
-        return Err("开启加密时必须设置密码".into());
+        return Err(t!("开启加密时必须设置密码", "A password is required when encryption is on"));
     }
     save_config(&cfg)?;
     get_bootstrap()
@@ -550,7 +577,7 @@ pub fn update_schedule(enabled: bool, time_local: String) -> Result<BootstrapSta
         || parts[0].parse::<u32>().ok().filter(|h| *h < 24).is_none()
         || parts[1].parse::<u32>().ok().filter(|m| *m < 60).is_none()
     {
-        return Err("时间格式应为 HH:mm".into());
+        return Err(t!("时间格式应为 HH:mm", "Time must be in HH:mm format"));
     }
     let mut cfg = load_config()?;
     cfg.schedule.enabled = enabled;
@@ -579,11 +606,11 @@ pub fn set_start_on_login(
     if enabled {
         launcher
             .enable()
-            .map_err(|e| format!("启用登录启动失败: {e}"))?;
+            .map_err(|e| t!("启用登录启动失败: {e}", "Failed to enable start on login: {e}"))?;
     } else {
         launcher
             .disable()
-            .map_err(|e| format!("关闭登录启动失败: {e}"))?;
+            .map_err(|e| t!("关闭登录启动失败: {e}", "Failed to disable start on login: {e}"))?;
     }
     let mut cfg = load_config()?;
     cfg.app.start_on_login = enabled;
