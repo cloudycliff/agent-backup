@@ -81,7 +81,7 @@
 | 7 | release 日志写入文件，界面可打开日志目录 | C5 | 已完成 |
 | 8 | 前端拆分为组件 | C4 | 已完成 |
 | 9 | S3 测连改为写入测试；目标可编辑；排除规则可在界面修改；加密未设密码时禁止备份；密码不再 trim；自定义源可单独开关 | 第 5 节第 3、4 条 | 已完成 |
-| 10 | `open_path` 只允许打开备份目标与配置目录；设置 CSP | 第 5 节最后一条 | 待处理 |
+| 10 | `open_path` 只允许打开备份目标与配置目录；设置 CSP | 第 5 节最后一条 | 已完成 |
 | 11 | 预设合并保留内置顺序、检查 `version`；目标类型抽象为 `Target` trait | 第 5 节第 5、6 条 | 待处理 |
 | 12 | 各源并行打包 | D6 | 待处理 |
 
@@ -262,3 +262,21 @@
 - `cargo test` 23 个测试通过；`npx tsc --noEmit` 通过；无编译警告。
 - S3 写入测试只验证了不可达地址返回"写入测试失败"，没有真实 S3 / R2 环境验证上传和删除路径。
 - 未做界面实操验证。
+
+### 步骤 10：`open_path` 限制与 CSP
+
+改动：
+- `open_path` 只打开**已存在的目录**，且必须位于某个本地目标的根目录或配置目录之内（按真实路径比较，`..` 和链接都无法绕过）。以前前端传什么路径就交给 `explorer` / `open`，传入一个可执行文件路径会直接运行它。
+- `tauri.conf.json` 设置 CSP（以前为 `null`）：
+  - 正式构建：`default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: asset: http://asset.localhost; connect-src ipc: http://ipc.localhost`。Tauri 会为打包的脚本和样式自动加 nonce / hash；React 的 `style={{}}` 走 CSSOM，不受 `style-src` 限制。
+  - 开发构建单独用 `devCsp`：额外允许内联样式（Vite 开发服务器用 `<style>` 注入 CSS）和 `ws://localhost:1420`（热更新）。
+- 新增测试：目录可打开；文件、目标外目录、用 `..` 跳出、不存在的路径都被拒绝。
+
+验证：
+- `cargo test` 24 个测试通过；`npx tsc --noEmit` 通过。
+- 用 `tauri build --debug --no-bundle` 构建内嵌前端资源的版本（与正式版相同的加载方式），以独立的配置目录和 WebView2 数据目录启动，通过 WebView2 远程调试协议检查：
+  - 页面正常渲染，15 个 Agent 卡片、预估体积、状态行都在，说明 IPC 未被 CSP 拦截；样式表生效。
+  - 重新加载后控制台没有任何 CSP 违规记录。
+  - 向页面注入 `<style>` 被拦截，说明 CSP 确实生效。
+  - 从页面调用 `open_path` 打开 `C:\Windows` 和 `C:\Windows\notepad.exe` 均被拒绝。
+- 未在 macOS 上验证。

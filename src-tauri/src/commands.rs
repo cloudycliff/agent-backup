@@ -502,9 +502,33 @@ pub fn reset_presets() -> Result<BootstrapState, String> {
     get_bootstrap()
 }
 
+/// Only directories under a local destination or the config directory: the shell
+/// would launch a file with its default handler, and the path comes from the web view.
 #[tauri::command]
 pub fn open_path(path: String) -> Result<(), String> {
-    open_path_in_explorer(&PathBuf::from(path))
+    let cfg = load_config()?;
+    let mut allowed: Vec<PathBuf> = cfg
+        .destinations
+        .iter()
+        .filter_map(|d| match d {
+            Destination::Local { local, .. } => Some(PathBuf::from(&local.root_path)),
+            Destination::S3 { .. } => None,
+        })
+        .collect();
+    allowed.push(config_dir()?);
+    let path = PathBuf::from(path);
+    if !is_openable(&path, &allowed) {
+        return Err("只能打开备份目标或配置目录内的文件夹".into());
+    }
+    open_path_in_explorer(&path)
+}
+
+fn is_openable(path: &std::path::Path, allowed_roots: &[PathBuf]) -> bool {
+    let roots: Vec<PathBuf> = allowed_roots
+        .iter()
+        .filter_map(|r| std::fs::canonicalize(r).ok())
+        .collect();
+    path.is_dir() && crate::packager::is_within(path, &roots)
 }
 
 #[tauri::command]
@@ -601,6 +625,25 @@ mod tests {
         ));
         let err = result.expect_err("unreachable endpoint must fail");
         assert!(err.contains("写入测试失败"), "{err}");
+    }
+
+    #[test]
+    fn only_directories_inside_allowed_roots_can_be_opened() {
+        let base = std::env::temp_dir().join(format!("agent-backup-open-{}", uuid::Uuid::new_v4()));
+        let root = base.join("dest");
+        let run = root.join("backups").join("host").join("2026-10-23T120000Z");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::write(run.join("tool.exe"), "x").unwrap();
+        std::fs::create_dir_all(base.join("elsewhere")).unwrap();
+        let allowed = [root.clone()];
+
+        assert!(is_openable(&run, &allowed));
+        assert!(is_openable(&root, &allowed));
+        assert!(!is_openable(&run.join("tool.exe"), &allowed), "files are never opened");
+        assert!(!is_openable(&base.join("elsewhere"), &allowed));
+        assert!(!is_openable(&root.join("..").join("elsewhere"), &allowed), "no escaping via ..");
+        assert!(!is_openable(&base.join("missing"), &allowed));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
