@@ -7,6 +7,10 @@ use std::fs;
 
 #[test]
 fn presets_parse_and_backup_local() {
+    let config_dir = std::env::temp_dir().join("agent-backup-smoke-config");
+    let _ = fs::remove_dir_all(&config_dir);
+    std::env::set_var("AGENT_BACKUP_CONFIG_DIR", &config_dir);
+
     let presets = load_merged_presets().expect("presets");
     assert!(presets.agents.iter().any(|a| a.key == "cursor"));
     assert!(presets.agents.iter().any(|a| a.key == "cursor-cli"));

@@ -119,6 +119,7 @@ fn collect_files(
         }
 
         for entry in WalkDir::new(&target)
+            .follow_links(true)
             .into_iter()
             .filter_entry(|e| {
                 if e.file_type().is_dir() {
@@ -434,6 +435,7 @@ fn collect_files_tree(
     let (file_globs, dir_globs) = build_exclusion_set(exclusions, hard_exclude)?;
     let mut files = Vec::new();
     for entry in WalkDir::new(root)
+        .follow_links(true)
         .into_iter()
         .filter_entry(|e| {
             if e.depth() == 0 {
@@ -552,4 +554,70 @@ pub fn estimate_custom(
         file_count,
         bytes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AppConfig;
+
+    fn temp_base(name: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!("agent-backup-{name}-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    fn link_dir(target: &Path, link: &Path) {
+        #[cfg(windows)]
+        {
+            let out = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("run mklink");
+            assert!(out.status.success(), "mklink failed: {out:?}");
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+    }
+
+    fn rels(files: &[(PathBuf, String)]) -> Vec<&str> {
+        files.iter().map(|(_, r)| r.as_str()).collect()
+    }
+
+    #[test]
+    fn collect_files_follows_directory_links() {
+        let base = temp_base("link");
+        let shared = base.join("shared").join("skill-a");
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(shared.join("SKILL.md"), "a").unwrap();
+        let skills = base.join("root").join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(skills.join("local.md"), "b").unwrap();
+        link_dir(&shared, &skills.join("skill-a"));
+
+        let excl = AppConfig::default().exclusions;
+        let files = collect_files(&base.join("root"), &["skills/".into()], &excl, &[]).unwrap();
+        assert_eq!(rels(&files), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
+
+        let tree = collect_files_tree(&base.join("root"), &excl, &[]).unwrap();
+        assert_eq!(rels(&tree), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn collect_files_survives_link_loops() {
+        let base = temp_base("loop");
+        let skills = base.join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        fs::write(skills.join("a.md"), "a").unwrap();
+        link_dir(&base, &skills.join("loop"));
+
+        let excl = AppConfig::default().exclusions;
+        let files = collect_files(&base, &["skills/".into()], &excl, &[]).unwrap();
+        assert!(files.iter().any(|(_, r)| r == "skills/a.md"));
+        assert!(files.len() < 10, "loop was expanded: {:?}", rels(&files));
+        let _ = fs::remove_dir_all(&base);
+    }
 }

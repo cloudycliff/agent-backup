@@ -486,6 +486,25 @@
         }
       ],
       "hard_exclude": ["tmp/", "cache/", "*.log"]
+    },
+    {
+      "key": "shared-agents",
+      "label": "共享 Skills（~/.agents）",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".agents",
+        "mac": ".agents",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "skills",
+          "label": "Skills",
+          "default_enabled": true,
+          "include": ["skills/", ".skill-lock.json"]
+        }
+      ],
+      "hard_exclude": []
     }
   ]
 }

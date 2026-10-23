@@ -15,8 +15,10 @@
 内置默认预设打包在应用内：`agent-presets.default.json`。  
 若用户配置目录没有 `agent-presets.json`，则完全使用内置默认。
 
-内置覆盖的 Agent（按 `key`）：`cursor`、`cursor-cli`、`claude-code`、`codex`、`workbuddy`、`windsurf`、`continue`、`cline`、`kiro`、`aider`、`gemini`。  
+内置覆盖的 Agent（按 `key`）：`cursor`、`cursor-cli`、`claude-code`、`codex`、`workbuddy`、`windsurf`、`continue`、`cline`、`kiro`、`aider`、`gemini`、`shared-agents`。  
 `root.win` / `root.mac` 支持多级路径，例如 Windsurf 用 `.codeium/windsurf`。
+
+打包时会跟随软链接和目录联接（Junction），链接目录里的内容按链接所在位置写入 zip，循环链接会被跳过。`shared-agents` 对应 `~/.agents/skills`：很多 skills 管理工具把技能放在这里，再链接到各个 Agent 的 `skills/` 下。
 
 `cursor-cli` 与 `cursor` 共用 `~/.cursor` 根目录，只收 CLI 独有的 `cli-config.json`、`agent-cli-state.json` 和会话 `chats/`（默认不勾，体积可能很大）。两者共用的 rules / skills / `mcp.json` / `hooks.json` 由 `cursor` 预设负责，避免重复打包；只用 CLI 时也请保留 `cursor` 的勾选。CLI 程序本体（Windows 的 `%LOCALAPPDATA%\cursor-agent`、macOS 的 `~/.local/share/cursor-agent`）不备份，重装即可；登录凭据在系统钥匙串中，也不会被打包。
 

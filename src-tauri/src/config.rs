@@ -170,8 +170,12 @@ impl Default for AppConfig {
 }
 
 pub fn config_dir() -> Result<PathBuf, String> {
-    let home = dirs_home().ok_or_else(|| "无法解析用户主目录".to_string())?;
-    let dir = home.join(".agent-backup");
+    let dir = match std::env::var_os("AGENT_BACKUP_CONFIG_DIR").filter(|v| !v.is_empty()) {
+        Some(custom) => PathBuf::from(custom),
+        None => dirs_home()
+            .ok_or_else(|| "无法解析用户主目录".to_string())?
+            .join(".agent-backup"),
+    };
     fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
     Ok(dir)
 }

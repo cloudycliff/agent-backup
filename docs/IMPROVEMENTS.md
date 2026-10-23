@@ -65,7 +65,7 @@
 
 | 步骤 | 内容 | 覆盖问题 | 状态 |
 |---|---|---|---|
-| 1 | 打包跟随链接；新增 `~/.agents` 预设；测试使用隔离的配置目录 | A1 A2 C6（部分） | 待处理 |
+| 1 | 打包跟随链接；新增 `~/.agents` 预设；测试使用隔离的配置目录 | A1 A2 C6（部分） | 已完成 |
 | 2 | 耗时命令改为异步执行；进度按原始字节统一计算并在源内更新 | B1 B2 B3 | 待处理 |
 | 3 | 新增 `app_data` 根类型与 `detect` 字段；修正 Aider / Gemini / Continue；补 Cursor / Kiro / Windsurf 编辑器用户设置；修正深度 0 过滤 | A3 A4 A5 A6 | 待处理 |
 | 4 | 单文件失败降级为警告；配置原子写入 + `serde(default)`；预设出错回退内置；定时补跑 | A7 B4 B5 B6 | 待处理 |
@@ -74,3 +74,18 @@
 未纳入计划、留作后续：C4 C5 D6，以及第 5 节的易用性与可扩展性条目。
 
 ## 三、执行记录
+
+### 步骤 1：链接跟随与 `~/.agents` 预设
+
+改动：
+- `packager.rs`：`collect_files` 和 `collect_files_tree` 的 `WalkDir` 开启 `follow_links(true)`。zip 内路径仍按链接所在位置记录，循环链接由 walkdir 检测并跳过。
+- 预设新增 `shared-agents`，备份 `~/.agents/skills/` 和 `.skill-lock.json`。
+- `config.rs`：`config_dir()` 支持环境变量 `AGENT_BACKUP_CONFIG_DIR`；冒烟测试改用临时配置目录，不再往真实 `history.jsonl` 写记录。
+- 新增单元测试：链接目录被收录（`collect_files` 与 `collect_files_tree` 都覆盖）、循环链接不会无限展开。Windows 用 `mklink /J` 建联接，Unix 用软链接。
+
+验证：
+- `cargo test` 3 个测试通过。
+- 本机冒烟产物：`claude-code` zip 中 skills 从 17 个变为 84 个（全部）；新增 `shared-agents` zip，含 79 个技能。
+- 真实 `~/.agent-backup/history.jsonl` 的修改时间未变化。
+
+影响：链接到其他 Agent 目录的技能会在多个 zip 中各存一份，体积有所增加，换来的是每个 zip 单独解压即可恢复。
