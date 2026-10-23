@@ -45,7 +45,7 @@
           "id": "hooks",
           "label": "Hooks",
           "default_enabled": true,
-          "include": ["hooks/"]
+          "include": ["hooks.json", "hooks/"]
         },
         {
           "id": "plugins",
@@ -58,6 +58,31 @@
           "label": "会话与项目状态",
           "default_enabled": false,
           "include": ["projects/", "plans/", "ai-tracking/"]
+        }
+      ],
+      "hard_exclude": []
+    },
+    {
+      "key": "cursor-cli",
+      "label": "Cursor CLI",
+      "root": {
+        "kind": "home_subdir",
+        "win": ".cursor",
+        "mac": ".cursor",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "config",
+          "label": "配置",
+          "default_enabled": true,
+          "include": ["cli-config.json", "agent-cli-state.json"]
+        },
+        {
+          "id": "sessions",
+          "label": "会话",
+          "default_enabled": false,
+          "include": ["chats/"]
         }
       ],
       "hard_exclude": []

@@ -3,11 +3,11 @@
 同事的电脑硬盘坏了。  
 他用各种 Agent 攒了很久的 skills、rules、对话和习惯配置，一夜之间没了。
 
-那种损失很难补回来——不是代码仓库能 `git clone` 的东西，而是散落在 `~/.cursor`、`~/.claude`、`~/.codex` 里、平时几乎不会想到要备份的个人资产。
+那种损失很难补回来。不是代码仓库能 `git clone` 的东西，而是散落在 `~/.cursor`、`~/.claude`、`~/.codex` 里、平时几乎不会想到要备份的个人资产。
 
 所以有了这个项目：把本机已经装好的 Agent 配置，**单向备份**到本地目录或 S3 兼容存储。不追求花哨的双向同步，先保证「换机 / 翻车时还有一份」。
 
-目前支持：**Windows + macOS**。内置探测 Cursor、Claude Code、Codex、Workbuddy、Windsurf、Continue、Cline、Kiro、Aider、Gemini CLI；也可以自己加文件夹。
+目前支持：**Windows + macOS**。内置探测 Cursor、Cursor CLI、Claude Code、Codex、Workbuddy、Windsurf、Continue、Cline、Kiro、Aider、Gemini CLI；也可以自己加文件夹。
 
 备份时会先做**体积预估**，过程中显示进度（按源打包 / 按目标写入）。
 
@@ -56,7 +56,7 @@ npm run tauri dev
 4. 到**记录**页确认结果  
 
 配置文件在：`~/.agent-backup/`（Windows：`%USERPROFILE%\.agent-backup\`）。  
-关窗口会进托盘，不会退出——这是定时备份能跑的前提。真要退出，用托盘菜单。
+关窗口会进托盘，不会退出。这是定时备份能跑的前提，真要退出用托盘菜单。
 
 ---
 
@@ -81,13 +81,13 @@ npm run tauri dev
 - **壳**：Tauri 2（Rust）+ React + TypeScript  
 - **前端**：`src/`（目前基本是单页 `App.tsx`）  
 - **后端**：`src-tauri/src/`  
-  - `config.rs` — `config.json` 读写、主机名、路径消毒  
-  - `presets.rs` — 内置 + 用户 presets 合并、根目录解析  
-  - `packager.rs` — 收文件、排除规则、打 zip（可 AES）  
-  - `backup.rs` — 编排：打包 → 多目标写入 → manifest → history  
-  - `s3.rs` — S3 兼容上传 / 测连  
-  - `scheduler.rs` — 每日定时（托盘进程内轮询）  
-  - `history.rs` / `notify.rs` / `commands.rs` — 记录、通知、IPC  
+  - `config.rs`：`config.json` 读写、主机名、路径消毒  
+  - `presets.rs`：内置 + 用户 presets 合并、根目录解析  
+  - `packager.rs`：收文件、排除规则、打 zip（可 AES）  
+  - `backup.rs`：编排：打包 → 多目标写入 → manifest → history  
+  - `s3.rs`：S3 兼容上传 / 测连  
+  - `scheduler.rs`：每日定时（托盘进程内轮询）  
+  - `history.rs` / `notify.rs` / `commands.rs`：记录、通知、IPC  
 - **内置预设**：`src-tauri/resources/agent-presets.default.json`（改探测路径优先改这里，而不是写死在代码里）  
 - **用户可覆盖**：`~/.agent-backup/agent-presets.json`（同 `key` 合并；提供了 `groups` 则整表替换）
 
@@ -116,7 +116,7 @@ npm run tauri dev
 ### 明确的非目标 / 后续可做（未承诺）
 
 - 应用内恢复向导、单文件浏览恢复  
-- 网盘原生 OAuth（百度 / 阿里云盘等）——当前用「本地挂载路径」覆盖  
+- 网盘原生 OAuth（百度 / 阿里云盘等）：当前用「本地挂载路径」覆盖  
 - Linux  
 - 钥匙串存密、备份配额清理 UI  
 - 更细的进度条、只重试失败目标  

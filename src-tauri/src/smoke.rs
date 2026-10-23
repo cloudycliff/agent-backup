@@ -9,6 +9,7 @@ use std::fs;
 fn presets_parse_and_backup_local() {
     let presets = load_merged_presets().expect("presets");
     assert!(presets.agents.iter().any(|a| a.key == "cursor"));
+    assert!(presets.agents.iter().any(|a| a.key == "cursor-cli"));
 
     let mut cfg = AppConfig::default();
     ensure_agent_defaults(&mut cfg, &presets);
