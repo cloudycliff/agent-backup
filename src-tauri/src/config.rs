@@ -3,7 +3,12 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub version: u32,
     pub app: AppSettings,
@@ -15,6 +20,7 @@ pub struct AppConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppSettings {
     pub hostname_override: Option<String>,
     pub start_on_login: bool,
@@ -23,18 +29,21 @@ pub struct AppSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EncryptionSettings {
     pub enabled: bool,
     pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScheduleSettings {
     pub enabled: bool,
     pub time_local: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SourcesSettings {
     pub agents: HashMap<String, AgentSourceState>,
     pub custom: Vec<CustomSource>,
@@ -42,6 +51,7 @@ pub struct SourcesSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSourceState {
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
     pub paths: HashMap<String, bool>,
@@ -52,6 +62,7 @@ pub struct CustomSource {
     pub id: String,
     pub label: String,
     pub path: String,
+    #[serde(default = "default_true")]
     pub enabled: bool,
 }
 
@@ -107,7 +118,8 @@ pub struct LocalDestination {
     pub root_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct S3Destination {
     pub endpoint: String,
     pub region: String,
@@ -118,6 +130,7 @@ pub struct S3Destination {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ExclusionSettings {
     pub file_name_globs: Vec<String>,
     pub dir_name_globs: Vec<String>,
@@ -127,46 +140,79 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             version: 1,
-            app: AppSettings {
-                hostname_override: None,
-                start_on_login: false,
-                minimize_to_tray: true,
-                language: "zh-CN".into(),
-            },
-            encryption: EncryptionSettings {
-                enabled: true,
-                password: None,
-            },
-            schedule: ScheduleSettings {
-                enabled: false,
-                time_local: "21:00".into(),
-            },
-            sources: SourcesSettings {
-                agents: HashMap::new(),
-                custom: Vec::new(),
-            },
+            app: AppSettings::default(),
+            encryption: EncryptionSettings::default(),
+            schedule: ScheduleSettings::default(),
+            sources: SourcesSettings::default(),
             destinations: Vec::new(),
-            exclusions: ExclusionSettings {
-                file_name_globs: vec![
-                    "*.pem".into(),
-                    "*.key".into(),
-                    "*credentials*".into(),
-                    "*secret*".into(),
-                    ".env".into(),
-                    ".env.*".into(),
-                ],
-                dir_name_globs: vec![
-                    "Cache".into(),
-                    "CachedData".into(),
-                    "GPUCache".into(),
-                    "Code Cache".into(),
-                    "logs".into(),
-                    "tmp".into(),
-                    "temp".into(),
-                ],
-            },
+            exclusions: ExclusionSettings::default(),
         }
     }
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            hostname_override: None,
+            start_on_login: false,
+            minimize_to_tray: true,
+            language: "zh-CN".into(),
+        }
+    }
+}
+
+impl Default for EncryptionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            password: None,
+        }
+    }
+}
+
+impl Default for ScheduleSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            time_local: "21:00".into(),
+        }
+    }
+}
+
+impl Default for ExclusionSettings {
+    fn default() -> Self {
+        Self {
+            file_name_globs: vec![
+                "*.pem".into(),
+                "*.key".into(),
+                "*credentials*".into(),
+                "*secret*".into(),
+                ".env".into(),
+                ".env.*".into(),
+            ],
+            dir_name_globs: vec![
+                "Cache".into(),
+                "CachedData".into(),
+                "GPUCache".into(),
+                "Code Cache".into(),
+                "logs".into(),
+                "tmp".into(),
+                "temp".into(),
+            ],
+        }
+    }
+}
+
+/// Writes via a sibling temp file and rename, so a crash never leaves a half-written file.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = path.with_file_name(tmp_name);
+    fs::write(&tmp, bytes).map_err(|e| format!("写入 {} 失败: {e}", tmp.display()))?;
+    fs::rename(&tmp, path).map_err(|e| format!("替换 {} 失败: {e}", path.display()))
 }
 
 pub fn config_dir() -> Result<PathBuf, String> {
@@ -210,15 +256,13 @@ pub fn load_config() -> Result<AppConfig, String> {
 }
 
 pub fn save_config(cfg: &AppConfig) -> Result<(), String> {
-    let path = config_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let raw = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    fs::write(&path, raw).map_err(|e| format!("写入配置失败: {e}"))
+    write_atomic(&config_path()?, raw.as_bytes()).map_err(|e| format!("写入配置失败: {e}"))
 }
 
-pub fn ensure_agent_defaults(cfg: &mut AppConfig, presets: &crate::presets::PresetFile) {
+/// Fills in toggles for agents/groups the config has not seen yet. Returns whether anything changed.
+pub fn ensure_agent_defaults(cfg: &mut AppConfig, presets: &crate::presets::PresetFile) -> bool {
+    let mut changed = false;
     for agent in &presets.agents {
         if agent.disabled {
             continue;
@@ -227,19 +271,21 @@ pub fn ensure_agent_defaults(cfg: &mut AppConfig, presets: &crate::presets::Pres
             .sources
             .agents
             .entry(agent.key.clone())
-            .or_insert_with(|| AgentSourceState {
-                enabled: true,
-                paths: HashMap::new(),
+            .or_insert_with(|| {
+                changed = true;
+                AgentSourceState {
+                    enabled: true,
+                    paths: HashMap::new(),
+                }
             });
-        if let Some(groups) = &agent.groups {
-            for group in groups {
-                entry
-                    .paths
-                    .entry(group.id.clone())
-                    .or_insert(group.default_enabled);
+        for group in agent.groups.iter().flatten() {
+            if !entry.paths.contains_key(&group.id) {
+                entry.paths.insert(group.id.clone(), group.default_enabled);
+                changed = true;
             }
         }
     }
+    changed
 }
 
 pub fn resolve_hostname(cfg: &AppConfig) -> String {
@@ -312,5 +358,36 @@ pub fn open_path_in_explorer(path: &Path) -> Result<(), String> {
     {
         let _ = path;
         Err("当前平台暂不支持打开目录".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_config_fills_missing_fields_with_defaults() {
+        let cfg: AppConfig = serde_json::from_str(
+            r#"{"version":1,"schedule":{"enabled":true},
+                "sources":{"agents":{"cursor":{"paths":{"rules":false}}}},
+                "some_future_field":123}"#,
+        )
+        .unwrap();
+        assert!(cfg.schedule.enabled);
+        assert_eq!(cfg.schedule.time_local, "21:00");
+        assert!(cfg.encryption.enabled);
+        assert!(cfg.sources.agents["cursor"].enabled);
+        assert!(!cfg.exclusions.file_name_globs.is_empty());
+    }
+
+    #[test]
+    fn write_atomic_replaces_existing_file() {
+        let dir = std::env::temp_dir().join(format!("agent-backup-atomic-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("config.json");
+        write_atomic(&path, b"one").unwrap();
+        write_atomic(&path, b"two").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "two");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

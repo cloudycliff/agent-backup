@@ -66,6 +66,7 @@ type Bootstrap = {
   config_path: string;
   presets_path: string;
   hostname: string;
+  warnings: string[];
 };
 
 type BackupResult = {
@@ -86,6 +87,7 @@ type BackupResult = {
     archive?: string;
     bytes?: number;
     error?: string | null;
+    warnings?: string[];
   }>;
 };
 
@@ -343,6 +345,16 @@ export default function App() {
       </header>
 
       {error && <div className="banner error-banner">{error}</div>}
+      {boot.warnings.length > 0 && (
+        <div className="banner error-banner">
+          预设有问题，以下内容已跳过：
+          <ul>
+            {boot.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {latestFailure && (
         <div className="banner error-banner row-between">
           <div>
@@ -740,6 +752,13 @@ export default function App() {
                                   {s.label}: {s.status}
                                   {s.archive ? ` · ${s.archive}` : ""}
                                   {s.error ? ` · ${s.error}` : ""}
+                                  {s.warnings && s.warnings.length > 0 && (
+                                    <ul className="muted">
+                                      {s.warnings.map((w) => (
+                                        <li key={w}>{w}</li>
+                                      ))}
+                                    </ul>
+                                  )}
                                 </li>
                               ))}
                             </ul>
@@ -832,7 +851,7 @@ export default function App() {
                 </button>
               </div>
               <p className="muted" style={{ marginTop: 8 }}>
-                托盘常驻时到点自动备份；与手动备份互斥，冲突则跳过。
+                托盘常驻时到点自动备份；错过时间（睡眠或关机）会在下次运行时补跑一次。与手动备份互斥，冲突时稍后再试。
               </p>
 
               <hr className="sep" />

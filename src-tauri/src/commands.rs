@@ -6,9 +6,7 @@ use crate::config::{
     config_dir, config_path, ensure_agent_defaults, load_config, open_path_in_explorer, save_config,
     user_presets_path, AppConfig, CustomSource, Destination, LocalDestination, S3Destination,
 };
-use crate::presets::{
-    load_merged_presets, reset_user_presets, resolve_agents, ResolvedAgent,
-};
+use crate::presets::{load_presets, reset_user_presets, ResolvedAgent};
 
 #[derive(Debug, Serialize)]
 pub struct BootstrapState {
@@ -18,6 +16,7 @@ pub struct BootstrapState {
     pub config_path: String,
     pub presets_path: String,
     pub hostname: String,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -77,19 +76,20 @@ fn to_agent_views(cfg: &AppConfig, agents: Vec<ResolvedAgent>) -> Vec<AgentView>
 
 #[tauri::command]
 pub fn get_bootstrap() -> Result<BootstrapState, String> {
-    let presets = load_merged_presets()?;
-    let agents = resolve_agents(&presets)?;
+    let loaded = load_presets()?;
     let mut cfg = load_config()?;
-    ensure_agent_defaults(&mut cfg, &presets);
-    save_config(&cfg)?;
+    if ensure_agent_defaults(&mut cfg, &loaded.presets) {
+        save_config(&cfg)?;
+    }
     let hostname = crate::config::resolve_hostname(&cfg);
     Ok(BootstrapState {
-        config: cfg.clone(),
-        agents: to_agent_views(&cfg, agents),
+        agents: to_agent_views(&cfg, loaded.agents),
+        config: cfg,
         config_dir: config_dir()?.to_string_lossy().to_string(),
         config_path: config_path()?.to_string_lossy().to_string(),
         presets_path: user_presets_path()?.to_string_lossy().to_string(),
         hostname,
+        warnings: loaded.warnings,
     })
 }
 

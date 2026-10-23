@@ -2,7 +2,7 @@ use crate::backup::run_backup;
 use crate::config::{
     ensure_agent_defaults, resolve_hostname, AppConfig, Destination, LocalDestination,
 };
-use crate::presets::load_merged_presets;
+use crate::presets::load_presets;
 use std::fs;
 
 #[test]
@@ -11,12 +11,13 @@ fn presets_parse_and_backup_local() {
     let _ = fs::remove_dir_all(&config_dir);
     std::env::set_var("AGENT_BACKUP_CONFIG_DIR", &config_dir);
 
-    let presets = load_merged_presets().expect("presets");
-    assert!(presets.agents.iter().any(|a| a.key == "cursor"));
-    assert!(presets.agents.iter().any(|a| a.key == "cursor-cli"));
+    let loaded = load_presets().expect("presets");
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    assert!(loaded.agents.iter().any(|a| a.key == "cursor"));
+    assert!(loaded.agents.iter().any(|a| a.key == "cursor-cli"));
 
     let mut cfg = AppConfig::default();
-    ensure_agent_defaults(&mut cfg, &presets);
+    ensure_agent_defaults(&mut cfg, &loaded.presets);
     cfg.encryption.enabled = false;
 
     let dest = std::env::temp_dir().join("agent-backup-smoke-dest");

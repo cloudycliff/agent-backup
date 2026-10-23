@@ -105,7 +105,8 @@
 - 多目标尽力而为：一个失败不影响其他已成功目标
 - `encryption.enabled` 默认 `true`；开启时 zip 使用 **AES-256** 密码保护（WinRAR / 7-Zip 等可解压）
 - 密码明文保存在 `config.json`（按产品决策）
-- `schedule.enabled` + `schedule.time_local`（本地 `HH:mm`）：托盘常驻时每日到点备份
+- `schedule.enabled` + `schedule.time_local`（本地 `HH:mm`）：托盘常驻时每日到点备份；错过的时间点（睡眠、关机、应用未运行）会在下次运行时补跑一次，不会累计补多次
+- 配置文件采用"写临时文件再改名"的方式保存；缺失的字段按默认值补齐，旧版配置可直接使用
 - `app.start_on_login`：登录时启动
 - `sources.custom[]`：自定义文件夹源，不依赖 presets
 
@@ -133,6 +134,8 @@
 - 每个 Agent / 自定义源单独一个 zip
 - 文件夹名与文件名都带 UTC 时间戳：`YYYY-MM-DDTHHMMSSZ`
 - `manifest.json` 明文，记录源、校验和与各目标结果
+- 单个文件读不了（被占用、无权限、链接失效、循环链接）不会让整个源失败：该文件被跳过，原因记在 `sources[].warnings`（每个源最多 20 条），整体状态记为 `partial` 并发通知
+- 用户 `agent-presets.json` 解析失败时回退到内置预设；单个 Agent 缺 `root` 或 `root.kind` 不支持时只跳过该 Agent。两种情况都会在界面顶部提示
 
 ## 常见操作
 

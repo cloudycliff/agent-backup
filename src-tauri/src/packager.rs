@@ -10,6 +10,8 @@ use zip::{AesMode, CompressionMethod, ZipWriter};
 use crate::config::ExclusionSettings;
 use crate::presets::ResolvedAgent;
 
+const MAX_WARNINGS: usize = 20;
+
 #[derive(Debug, Clone)]
 pub struct PackedSource {
     pub key: String,
@@ -24,6 +26,87 @@ pub struct PackedSource {
     pub file_count: u64,
     pub status: String,
     pub error: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+impl PackedSource {
+    fn new(
+        key: &str,
+        source_type: &str,
+        label: &str,
+        enabled_paths: Option<Vec<String>>,
+        root_path: PathBuf,
+        work_dir: &Path,
+        archive_name: String,
+    ) -> Self {
+        Self {
+            key: key.to_string(),
+            source_type: source_type.to_string(),
+            label: label.to_string(),
+            enabled_paths,
+            root_path,
+            archive_path: work_dir.join(&archive_name),
+            archive_name,
+            bytes: 0,
+            sha256: String::new(),
+            file_count: 0,
+            status: "skipped".into(),
+            error: None,
+            warnings: Vec::new(),
+        }
+    }
+
+    fn failed(mut self, error: String) -> Self {
+        self.status = "failed".into();
+        self.error = Some(error);
+        self
+    }
+
+    fn pack(
+        mut self,
+        collected: Result<Collected, String>,
+        password: Option<&str>,
+        on_file: &mut dyn FnMut(u64),
+    ) -> Self {
+        let collected = match collected {
+            Ok(c) => c,
+            Err(e) => return self.failed(e),
+        };
+        self.warnings = collected.warnings;
+        if !collected.files.is_empty() {
+            match zip_files(&collected.files, &self.archive_path, password, on_file) {
+                Ok(out) => {
+                    self.warnings.extend(out.warnings);
+                    if out.file_count == 0 {
+                        let first = self.warnings.first().cloned().unwrap_or_default();
+                        self = self.failed(format!("所有文件都读取失败：{first}"));
+                    } else {
+                        self.bytes = out.bytes;
+                        self.sha256 = out.sha256;
+                        self.file_count = out.file_count;
+                        self.status = "ok".into();
+                    }
+                }
+                Err(e) => self = self.failed(e),
+            }
+        }
+        cap_warnings(&mut self.warnings);
+        self
+    }
+}
+
+fn cap_warnings(warnings: &mut Vec<String>) {
+    if warnings.len() > MAX_WARNINGS {
+        let extra = warnings.len() - MAX_WARNINGS;
+        warnings.truncate(MAX_WARNINGS);
+        warnings.push(format!("……另有 {extra} 条"));
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Collected {
+    pub files: Vec<(PathBuf, String)>,
+    pub warnings: Vec<String>,
 }
 
 pub fn build_exclusion_set(
@@ -86,22 +169,69 @@ fn should_skip_file(name: &str, relative: &str, file_globs: &GlobSet, hard: &[St
     false
 }
 
+fn walk_error(err: &walkdir::Error) -> String {
+    match err.path() {
+        Some(p) => format!("跳过 {}: {err}", p.display()),
+        None => format!("跳过: {err}"),
+    }
+}
+
+/// Walks `dir`, appending files (relative to `root`) that survive the exclusion rules.
+fn walk_into(
+    out: &mut Collected,
+    root: &Path,
+    dir: &Path,
+    file_globs: &GlobSet,
+    dir_globs: &GlobSet,
+    hard_exclude: &[String],
+) -> Result<(), String> {
+    let walker = WalkDir::new(dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|e| {
+            if e.depth() == 0 || !e.file_type().is_dir() {
+                return true;
+            }
+            !should_skip_dir(&e.file_name().to_string_lossy(), dir_globs)
+        });
+    for entry in walker {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(err) => {
+                out.warnings.push(walk_error(&err));
+                continue;
+            }
+        };
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let abs = entry.path().to_path_buf();
+        let rel = abs
+            .strip_prefix(root)
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_file(&name, &rel, file_globs, hard_exclude) {
+            continue;
+        }
+        out.files.push((abs, rel));
+    }
+    Ok(())
+}
+
 fn collect_files(
     root: &Path,
     includes: &[String],
     exclusions: &ExclusionSettings,
     hard_exclude: &[String],
-) -> Result<Vec<(PathBuf, String)>, String> {
+) -> Result<Collected, String> {
     let (file_globs, dir_globs) = build_exclusion_set(exclusions, hard_exclude)?;
-    let mut files = Vec::new();
+    let mut out = Collected::default();
 
     for include in includes {
         let include = include.replace('\\', "/");
-        let target = if include.ends_with('/') {
-            root.join(include.trim_end_matches('/'))
-        } else {
-            root.join(&include)
-        };
+        let target = root.join(include.trim_end_matches('/'));
         if !target.exists() {
             continue;
         }
@@ -113,47 +243,56 @@ fn collect_files(
                 .unwrap_or("")
                 .to_string();
             if !should_skip_file(&name, &rel, &file_globs, hard_exclude) {
-                files.push((target, rel));
+                out.files.push((target, rel));
             }
             continue;
         }
-
-        for entry in WalkDir::new(&target)
-            .follow_links(true)
-            .into_iter()
-            .filter_entry(|e| {
-                if e.depth() == 0 {
-                    return true;
-                }
-                if e.file_type().is_dir() {
-                    let name = e.file_name().to_string_lossy();
-                    !should_skip_dir(&name, &dir_globs)
-                } else {
-                    true
-                }
-            })
-            .filter_map(|e| e.ok())
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let abs = entry.path().to_path_buf();
-            let rel = abs
-                .strip_prefix(root)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .replace('\\', "/");
-            let name = entry.file_name().to_string_lossy().to_string();
-            if should_skip_file(&name, &rel, &file_globs, hard_exclude) {
-                continue;
-            }
-            files.push((abs, rel));
-        }
+        walk_into(&mut out, root, &target, &file_globs, &dir_globs, hard_exclude)?;
     }
 
-    files.sort_by(|a, b| a.1.cmp(&b.1));
-    files.dedup_by(|a, b| a.1 == b.1);
-    Ok(files)
+    out.files.sort_by(|a, b| a.1.cmp(&b.1));
+    out.files.dedup_by(|a, b| a.1 == b.1);
+    Ok(out)
+}
+
+fn collect_files_tree(
+    root: &Path,
+    exclusions: &ExclusionSettings,
+    hard_exclude: &[String],
+) -> Result<Collected, String> {
+    let (file_globs, dir_globs) = build_exclusion_set(exclusions, hard_exclude)?;
+    let mut out = Collected::default();
+    walk_into(&mut out, root, root, &file_globs, &dir_globs, hard_exclude)?;
+    out.files.sort_by(|a, b| a.1.cmp(&b.1));
+    Ok(out)
+}
+
+fn collect_custom(path: &Path, exclusions: &ExclusionSettings) -> Result<Collected, String> {
+    if path.is_dir() {
+        return collect_files_tree(path, exclusions, &[]);
+    }
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file")
+        .to_string();
+    collect_files(path.parent().unwrap_or(path), &[name], exclusions, &[])
+}
+
+fn enabled_includes(agent: &ResolvedAgent, enabled_group_ids: &[String]) -> Vec<String> {
+    agent
+        .groups
+        .iter()
+        .filter(|g| enabled_group_ids.iter().any(|id| id == &g.id))
+        .flat_map(|g| g.include.iter().cloned())
+        .collect()
+}
+
+pub struct ZipOutcome {
+    pub bytes: u64,
+    pub sha256: String,
+    pub file_count: u64,
+    pub warnings: Vec<String>,
 }
 
 pub fn zip_files(
@@ -161,7 +300,7 @@ pub fn zip_files(
     out_path: &Path,
     password: Option<&str>,
     on_file: &mut dyn FnMut(u64),
-) -> Result<(u64, String, u64), String> {
+) -> Result<ZipOutcome, String> {
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -174,15 +313,17 @@ pub fn zip_files(
     let mut hasher = Sha256::new();
     let mut total_bytes: u64 = 0;
     let mut file_count: u64 = 0;
+    let mut warnings = Vec::new();
     let mut buffer = Vec::new();
 
     for (abs, rel) in files {
+        buffer.clear();
+        if let Err(e) = File::open(abs).and_then(|mut f| f.read_to_end(&mut buffer)) {
+            warnings.push(format!("读取失败 {rel}: {e}"));
+            continue;
+        }
         zip.start_file(rel, options)
             .map_err(|e| format!("写入 zip entry 失败: {e}"))?;
-        let mut f = File::open(abs).map_err(|e| format!("读取文件失败 {}: {e}", abs.display()))?;
-        buffer.clear();
-        f.read_to_end(&mut buffer)
-            .map_err(|e| format!("读取文件失败 {}: {e}", abs.display()))?;
         zip.write_all(&buffer)
             .map_err(|e| format!("压缩写入失败: {e}"))?;
         hasher.update(rel.as_bytes());
@@ -193,9 +334,12 @@ pub fn zip_files(
     }
 
     zip.finish().map_err(|e| format!("完成 zip 失败: {e}"))?;
-    let digest = hex::encode(hasher.finalize());
-    let meta_bytes = fs::metadata(out_path).map(|m| m.len()).unwrap_or(total_bytes);
-    Ok((meta_bytes, digest, file_count))
+    Ok(ZipOutcome {
+        bytes: fs::metadata(out_path).map(|m| m.len()).unwrap_or(total_bytes),
+        sha256: hex::encode(hasher.finalize()),
+        file_count,
+        warnings,
+    })
 }
 
 pub fn pack_agent(
@@ -207,114 +351,30 @@ pub fn pack_agent(
     password: Option<&str>,
     on_file: &mut dyn FnMut(u64),
 ) -> PackedSource {
-    let archive_name = format!("{}_{}.zip", agent.key, timestamp);
-    let archive_path = work_dir.join(&archive_name);
-    let root = match &agent.root_path {
-        Some(p) => p.clone(),
-        None => {
-            return PackedSource {
-                key: agent.key.clone(),
-                source_type: "agent".into(),
-                label: agent.label.clone(),
-                enabled_paths: Some(enabled_group_ids.to_vec()),
-                root_path: PathBuf::new(),
-                archive_name,
-                archive_path,
-                bytes: 0,
-                sha256: String::new(),
-                file_count: 0,
-                status: "failed".into(),
-                error: Some("根目录未解析".into()),
-            };
-        }
+    let item = PackedSource::new(
+        &agent.key,
+        "agent",
+        &agent.label,
+        Some(enabled_group_ids.to_vec()),
+        agent.root_path.clone().unwrap_or_default(),
+        work_dir,
+        format!("{}_{}.zip", agent.key, timestamp),
+    );
+    let Some(root) = &agent.root_path else {
+        return item.failed("根目录未解析".into());
     };
-
-    let mut includes = Vec::new();
-    for group in &agent.groups {
-        if enabled_group_ids.iter().any(|id| id == &group.id) {
-            includes.extend(group.include.clone());
-        }
-    }
-
+    let includes = enabled_includes(agent, enabled_group_ids);
     if includes.is_empty() {
-        return PackedSource {
-            key: agent.key.clone(),
-            source_type: "agent".into(),
-            label: agent.label.clone(),
-            enabled_paths: Some(enabled_group_ids.to_vec()),
-            root_path: root,
-            archive_name,
-            archive_path,
-            bytes: 0,
-            sha256: String::new(),
-            file_count: 0,
-            status: "skipped".into(),
-            error: None,
-        };
+        return item;
     }
-
-    match collect_files(&root, &includes, exclusions, &agent.hard_exclude) {
-        Ok(files) if files.is_empty() => PackedSource {
-            key: agent.key.clone(),
-            source_type: "agent".into(),
-            label: agent.label.clone(),
-            enabled_paths: Some(enabled_group_ids.to_vec()),
-            root_path: root,
-            archive_name,
-            archive_path,
-            bytes: 0,
-            sha256: String::new(),
-            file_count: 0,
-            status: "skipped".into(),
-            error: None,
-        },
-        Ok(files) => match zip_files(&files, &archive_path, password, on_file) {
-            Ok((bytes, sha256, file_count)) => PackedSource {
-                key: agent.key.clone(),
-                source_type: "agent".into(),
-                label: agent.label.clone(),
-                enabled_paths: Some(enabled_group_ids.to_vec()),
-                root_path: root,
-                archive_name,
-                archive_path,
-                bytes,
-                sha256,
-                file_count,
-                status: "ok".into(),
-                error: None,
-            },
-            Err(e) => PackedSource {
-                key: agent.key.clone(),
-                source_type: "agent".into(),
-                label: agent.label.clone(),
-                enabled_paths: Some(enabled_group_ids.to_vec()),
-                root_path: root,
-                archive_name,
-                archive_path,
-                bytes: 0,
-                sha256: String::new(),
-                file_count: 0,
-                status: "failed".into(),
-                error: Some(e),
-            },
-        },
-        Err(e) => PackedSource {
-            key: agent.key.clone(),
-            source_type: "agent".into(),
-            label: agent.label.clone(),
-            enabled_paths: Some(enabled_group_ids.to_vec()),
-            root_path: root,
-            archive_name,
-            archive_path,
-            bytes: 0,
-            sha256: String::new(),
-            file_count: 0,
-            status: "failed".into(),
-            error: Some(e),
-        },
-    }
+    item.pack(
+        collect_files(root, &includes, exclusions, &agent.hard_exclude),
+        password,
+        on_file,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn pack_custom(
     id: &str,
     label: &str,
@@ -326,154 +386,19 @@ pub fn pack_custom(
     password: Option<&str>,
     on_file: &mut dyn FnMut(u64),
 ) -> PackedSource {
-    let archive_name = format!("{}_{}.zip", slug, timestamp);
-    let archive_path = work_dir.join(&archive_name);
+    let item = PackedSource::new(
+        id,
+        "custom",
+        label,
+        None,
+        path.to_path_buf(),
+        work_dir,
+        format!("{}_{}.zip", slug, timestamp),
+    );
     if !path.exists() {
-        return PackedSource {
-            key: id.to_string(),
-            source_type: "custom".into(),
-            label: label.to_string(),
-            enabled_paths: None,
-            root_path: path.to_path_buf(),
-            archive_name,
-            archive_path,
-            bytes: 0,
-            sha256: String::new(),
-            file_count: 0,
-            status: "failed".into(),
-            error: Some("路径不存在".into()),
-        };
+        return item.failed("路径不存在".into());
     }
-
-    let includes = if path.is_file() {
-        vec![path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("file")
-            .to_string()]
-    } else {
-        // pack directory contents with relative paths under that root
-        vec!["./".to_string()]
-    };
-
-    // For directory custom sources, walk the directory itself as root
-    let (root, include_list) = if path.is_dir() {
-        (path.to_path_buf(), vec!["".to_string()])
-    } else {
-        (
-            path.parent().unwrap_or(path).to_path_buf(),
-            includes,
-        )
-    };
-
-    let files = if path.is_dir() {
-        collect_files_tree(&root, exclusions, &[])
-    } else {
-        collect_files(&root, &include_list, exclusions, &[])
-    };
-
-    match files {
-        Ok(files) if files.is_empty() => PackedSource {
-            key: id.to_string(),
-            source_type: "custom".into(),
-            label: label.to_string(),
-            enabled_paths: None,
-            root_path: path.to_path_buf(),
-            archive_name,
-            archive_path,
-            bytes: 0,
-            sha256: String::new(),
-            file_count: 0,
-            status: "skipped".into(),
-            error: None,
-        },
-        Ok(files) => match zip_files(&files, &archive_path, password, on_file) {
-            Ok((bytes, sha256, file_count)) => PackedSource {
-                key: id.to_string(),
-                source_type: "custom".into(),
-                label: label.to_string(),
-                enabled_paths: None,
-                root_path: path.to_path_buf(),
-                archive_name,
-                archive_path,
-                bytes,
-                sha256,
-                file_count,
-                status: "ok".into(),
-                error: None,
-            },
-            Err(e) => PackedSource {
-                key: id.to_string(),
-                source_type: "custom".into(),
-                label: label.to_string(),
-                enabled_paths: None,
-                root_path: path.to_path_buf(),
-                archive_name,
-                archive_path,
-                bytes: 0,
-                sha256: String::new(),
-                file_count: 0,
-                status: "failed".into(),
-                error: Some(e),
-            },
-        },
-        Err(e) => PackedSource {
-            key: id.to_string(),
-            source_type: "custom".into(),
-            label: label.to_string(),
-            enabled_paths: None,
-            root_path: path.to_path_buf(),
-            archive_name,
-            archive_path,
-            bytes: 0,
-            sha256: String::new(),
-            file_count: 0,
-            status: "failed".into(),
-            error: Some(e),
-        },
-    }
-}
-
-fn collect_files_tree(
-    root: &Path,
-    exclusions: &ExclusionSettings,
-    hard_exclude: &[String],
-) -> Result<Vec<(PathBuf, String)>, String> {
-    let (file_globs, dir_globs) = build_exclusion_set(exclusions, hard_exclude)?;
-    let mut files = Vec::new();
-    for entry in WalkDir::new(root)
-        .follow_links(true)
-        .into_iter()
-        .filter_entry(|e| {
-            if e.depth() == 0 {
-                return true;
-            }
-            if e.file_type().is_dir() {
-                let name = e.file_name().to_string_lossy();
-                !should_skip_dir(&name, &dir_globs)
-            } else {
-                true
-            }
-        })
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let abs = entry.path().to_path_buf();
-        let rel = abs
-            .strip_prefix(root)
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let name = entry.file_name().to_string_lossy().to_string();
-        if should_skip_file(&name, &rel, &file_globs, hard_exclude) {
-            continue;
-        }
-        files.push((abs, rel));
-    }
-    files.sort_by(|a, b| a.1.cmp(&b.1));
-    Ok(files)
+    item.pack(collect_custom(path, exclusions), password, on_file)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -484,16 +409,18 @@ pub struct SourceEstimate {
     pub bytes: u64,
 }
 
-fn sum_files(files: &[(PathBuf, String)]) -> (u64, u64) {
-    let mut bytes = 0u64;
-    let mut count = 0u64;
-    for (abs, _) in files {
-        count += 1;
-        if let Ok(meta) = fs::metadata(abs) {
-            bytes += meta.len();
-        }
+fn estimate_of(key: &str, label: &str, files: &[(PathBuf, String)]) -> SourceEstimate {
+    let bytes = files
+        .iter()
+        .filter_map(|(abs, _)| fs::metadata(abs).ok())
+        .map(|m| m.len())
+        .sum();
+    SourceEstimate {
+        key: key.to_string(),
+        label: label.to_string(),
+        file_count: files.len() as u64,
+        bytes,
     }
-    (count, bytes)
 }
 
 pub fn estimate_agent(
@@ -503,30 +430,15 @@ pub fn estimate_agent(
 ) -> Result<SourceEstimate, String> {
     let root = agent
         .root_path
-        .clone()
+        .as_deref()
         .ok_or_else(|| "根目录未解析".to_string())?;
-    let mut includes = Vec::new();
-    for group in &agent.groups {
-        if enabled_group_ids.iter().any(|id| id == &group.id) {
-            includes.extend(group.include.clone());
-        }
-    }
-    if includes.is_empty() {
-        return Ok(SourceEstimate {
-            key: agent.key.clone(),
-            label: agent.label.clone(),
-            file_count: 0,
-            bytes: 0,
-        });
-    }
-    let files = collect_files(&root, &includes, exclusions, &agent.hard_exclude)?;
-    let (file_count, bytes) = sum_files(&files);
-    Ok(SourceEstimate {
-        key: agent.key.clone(),
-        label: agent.label.clone(),
-        file_count,
-        bytes,
-    })
+    let includes = enabled_includes(agent, enabled_group_ids);
+    let files = if includes.is_empty() {
+        Vec::new()
+    } else {
+        collect_files(root, &includes, exclusions, &agent.hard_exclude)?.files
+    };
+    Ok(estimate_of(&agent.key, &agent.label, &files))
 }
 
 pub fn estimate_custom(
@@ -535,32 +447,12 @@ pub fn estimate_custom(
     path: &Path,
     exclusions: &ExclusionSettings,
 ) -> Result<SourceEstimate, String> {
-    if !path.exists() {
-        return Ok(SourceEstimate {
-            key: id.to_string(),
-            label: label.to_string(),
-            file_count: 0,
-            bytes: 0,
-        });
-    }
-    let files = if path.is_dir() {
-        collect_files_tree(path, exclusions, &[])?
+    let files = if path.exists() {
+        collect_custom(path, exclusions)?.files
     } else {
-        let root = path.parent().unwrap_or(path);
-        let name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("file")
-            .to_string();
-        collect_files(root, &[name], exclusions, &[])?
+        Vec::new()
     };
-    let (file_count, bytes) = sum_files(&files);
-    Ok(SourceEstimate {
-        key: id.to_string(),
-        label: label.to_string(),
-        file_count,
-        bytes,
-    })
+    Ok(estimate_of(id, label, &files))
 }
 
 #[cfg(test)]
@@ -606,10 +498,10 @@ mod tests {
 
         let excl = AppConfig::default().exclusions;
         let files = collect_files(&base.join("root"), &["skills/".into()], &excl, &[]).unwrap();
-        assert_eq!(rels(&files), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
+        assert_eq!(rels(&files.files), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
 
         let tree = collect_files_tree(&base.join("root"), &excl, &[]).unwrap();
-        assert_eq!(rels(&tree), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
+        assert_eq!(rels(&tree.files), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -622,7 +514,7 @@ mod tests {
 
         let excl = AppConfig::default().exclusions;
         let files = collect_files(&base, &["tmp/".into()], &excl, &[]).unwrap();
-        assert_eq!(rels(&files), vec!["tmp/chat/log.json"]);
+        assert_eq!(rels(&files.files), vec!["tmp/chat/log.json"]);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -636,8 +528,46 @@ mod tests {
 
         let excl = AppConfig::default().exclusions;
         let files = collect_files(&base, &["skills/".into()], &excl, &[]).unwrap();
-        assert!(files.iter().any(|(_, r)| r == "skills/a.md"));
-        assert!(files.len() < 10, "loop was expanded: {:?}", rels(&files));
+        assert!(files.files.iter().any(|(_, r)| r == "skills/a.md"));
+        assert!(files.files.len() < 10, "loop was expanded: {:?}", rels(&files.files));
+        assert!(!files.warnings.is_empty(), "loop should be reported");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn broken_link_and_unreadable_file_become_warnings() {
+        let base = temp_base("warn");
+        let root = base.join("root");
+        fs::create_dir_all(root.join("skills")).unwrap();
+        fs::write(root.join("skills").join("ok.md"), "ok").unwrap();
+        fs::write(root.join("skills").join("locked.db"), "x").unwrap();
+        let gone = base.join("gone");
+        fs::create_dir_all(&gone).unwrap();
+        link_dir(&gone, &root.join("skills").join("dangling"));
+        fs::remove_dir_all(&gone).unwrap();
+
+        let item = PackedSource::new("t", "agent", "T", None, root.clone(), &base, "t.zip".into());
+        let collected = collect_files(&root, &["skills/".into()], &AppConfig::default().exclusions, &[]);
+
+        #[cfg(windows)]
+        let _lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(root.join("skills").join("locked.db"))
+                .unwrap()
+        };
+        let packed = item.pack(collected, None, &mut |_| {});
+
+        assert_eq!(packed.status, "ok", "{:?}", packed.error);
+        assert!(packed.warnings.iter().any(|w| w.contains("dangling")), "{:?}", packed.warnings);
+        #[cfg(windows)]
+        {
+            assert_eq!(packed.file_count, 1);
+            assert!(packed.warnings.iter().any(|w| w.contains("locked.db")), "{:?}", packed.warnings);
+        }
+        drop(packed);
         let _ = fs::remove_dir_all(&base);
     }
 }

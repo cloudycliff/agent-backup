@@ -60,17 +60,43 @@ pub struct ResolvedAgent {
     pub installed: bool,
 }
 
-pub fn load_merged_presets() -> Result<PresetFile, String> {
+pub struct LoadedPresets {
+    pub presets: PresetFile,
+    pub agents: Vec<ResolvedAgent>,
+    pub warnings: Vec<String>,
+}
+
+/// Built-in presets merged with the user overlay. Problems in the overlay or in
+/// individual agents are reported as warnings so one bad entry can't lock the app.
+pub fn load_presets() -> Result<LoadedPresets, String> {
     let defaults: PresetFile =
         serde_json::from_str(DEFAULT_PRESETS).map_err(|e| format!("内置预设损坏: {e}"))?;
+    let mut warnings = Vec::new();
+    let presets = match load_user_presets() {
+        Ok(Some(user)) => merge_presets(defaults, user),
+        Ok(None) => defaults,
+        Err(e) => {
+            warnings.push(format!("{e}，已改用内置预设"));
+            defaults
+        }
+    };
+    let agents = resolve_agents(&presets, &mut warnings);
+    Ok(LoadedPresets {
+        presets,
+        agents,
+        warnings,
+    })
+}
+
+fn load_user_presets() -> Result<Option<PresetFile>, String> {
     let user_path = user_presets_path()?;
     if !user_path.exists() {
-        return Ok(defaults);
+        return Ok(None);
     }
     let raw = fs::read_to_string(&user_path).map_err(|e| format!("读取用户预设失败: {e}"))?;
-    let user: PresetFile =
-        serde_json::from_str(&raw).map_err(|e| format!("解析用户预设失败: {e}"))?;
-    Ok(merge_presets(defaults, user))
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|e| format!("解析用户预设失败: {e}"))
 }
 
 fn merge_presets(mut defaults: PresetFile, user: PresetFile) -> PresetFile {
@@ -112,20 +138,28 @@ fn merge_presets(mut defaults: PresetFile, user: PresetFile) -> PresetFile {
     defaults
 }
 
-pub fn resolve_agents(presets: &PresetFile) -> Result<Vec<ResolvedAgent>, String> {
+fn resolve_agents(presets: &PresetFile, warnings: &mut Vec<String>) -> Vec<ResolvedAgent> {
     let mut out = Vec::new();
     for agent in &presets.agents {
-        let root = agent
-            .root
-            .clone()
-            .ok_or_else(|| format!("Agent `{}` 缺少 root 定义", agent.key))?;
+        let Some(root) = agent.root.clone() else {
+            if !agent.disabled {
+                warnings.push(format!("Agent `{}` 缺少 root 定义，已跳过", agent.key));
+            }
+            continue;
+        };
+        let root_path = match resolve_root_path(&root) {
+            Ok(p) => p,
+            Err(e) => {
+                warnings.push(format!("Agent `{}`：{e}，已跳过", agent.key));
+                continue;
+            }
+        };
         let groups = agent.groups.clone().unwrap_or_default();
         let hard_exclude = agent.hard_exclude.clone().unwrap_or_default();
         let label = agent
             .label
             .clone()
             .unwrap_or_else(|| agent.key.clone());
-        let root_path = resolve_root_path(&root)?;
         let detect = agent.detect.clone().unwrap_or_default();
         let installed = root_path
             .as_deref()
@@ -141,7 +175,7 @@ pub fn resolve_agents(presets: &PresetFile) -> Result<Vec<ResolvedAgent>, String
             installed,
         });
     }
-    Ok(out)
+    out
 }
 
 fn detect_installed(root: &Path, detect: &[String]) -> bool {
@@ -301,9 +335,28 @@ mod tests {
     #[test]
     fn builtin_presets_resolve() {
         let presets: PresetFile = serde_json::from_str(DEFAULT_PRESETS).unwrap();
-        let agents = resolve_agents(&presets).unwrap();
+        let mut warnings = Vec::new();
+        let agents = resolve_agents(&presets, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}");
         for key in ["cursor-cli", "cursor-editor", "kiro-editor", "windsurf-editor", "aider"] {
             assert!(agents.iter().any(|a| a.key == key), "missing preset {key}");
         }
+    }
+
+    #[test]
+    fn bad_agents_are_skipped_with_warnings() {
+        let presets: PresetFile = serde_json::from_str(
+            r#"{"version":1,"agents":[
+                {"key":"no-root"},
+                {"key":"hidden","disabled":true},
+                {"key":"bad-kind","root":{"kind":"nope","win":"x","mac":"x"}},
+                {"key":"good","root":{"kind":"home_subdir","win":".good","mac":".good"}}
+            ]}"#,
+        )
+        .unwrap();
+        let mut warnings = Vec::new();
+        let agents = resolve_agents(&presets, &mut warnings);
+        assert_eq!(agents.iter().map(|a| a.key.as_str()).collect::<Vec<_>>(), vec!["good"]);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
     }
 }

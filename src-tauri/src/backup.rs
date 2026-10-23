@@ -4,7 +4,7 @@ use serde_json::json;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, TryLockError};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
@@ -12,11 +12,11 @@ use crate::config::{history_path, resolve_hostname, slugify_label, AppConfig, De
 use crate::packager::{
     estimate_agent, estimate_custom, pack_agent, pack_custom, PackedSource, SourceEstimate,
 };
-use crate::presets::{
-    agent_enabled, effective_group_enabled, load_merged_presets, resolve_agents,
-};
+use crate::presets::{agent_enabled, effective_group_enabled, load_presets};
 
 static BACKUP_LOCK: Mutex<()> = Mutex::new(());
+
+pub const BACKUP_BUSY: &str = "已有备份正在进行，已跳过";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupRunResult {
@@ -120,8 +120,7 @@ impl Throttle {
 }
 
 pub fn estimate_backup(cfg: &AppConfig) -> Result<BackupEstimate, String> {
-    let presets = load_merged_presets()?;
-    let agents = resolve_agents(&presets)?;
+    let agents = load_presets()?.agents;
     let mut sources = Vec::new();
 
     for agent in agents.iter().filter(|a| !a.disabled && a.installed) {
@@ -167,9 +166,11 @@ pub fn run_backup_with_app(
     cfg: &AppConfig,
     trigger: &str,
 ) -> Result<BackupRunResult, String> {
-    let _guard = BACKUP_LOCK
-        .try_lock()
-        .map_err(|_| "已有备份正在进行，已跳过".to_string())?;
+    let _guard = match BACKUP_LOCK.try_lock() {
+        Ok(g) => g,
+        Err(TryLockError::Poisoned(p)) => p.into_inner(),
+        Err(TryLockError::WouldBlock) => return Err(BACKUP_BUSY.to_string()),
+    };
     run_backup_inner(app, cfg, trigger)
 }
 
@@ -207,8 +208,7 @@ fn run_backup_inner(
 
     let timestamp = Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
     let hostname = resolve_hostname(cfg);
-    let presets = load_merged_presets()?;
-    let agents = resolve_agents(&presets)?;
+    let agents = load_presets()?.agents;
 
     let work_root = std::env::temp_dir().join("agent-backup").join(&timestamp);
     fs::create_dir_all(&work_root).map_err(|e| e.to_string())?;
@@ -379,7 +379,9 @@ fn run_backup_inner(
         },
     );
 
-    let manifest_json = build_manifest_value(&packed, cfg, &hostname, &timestamp, &dest_results);
+    let summary = Summary::new(&packed, &dest_results);
+    let manifest_json =
+        build_manifest_value(&packed, cfg, &hostname, &timestamp, &dest_results, &summary);
     let manifest_bytes = serde_json::to_vec_pretty(&manifest_json).map_err(|e| e.to_string())?;
 
     for dest in &enabled_dests {
@@ -410,57 +412,17 @@ fn run_backup_inner(
         }
     }
 
-    let sources_ok = packed.iter().filter(|p| p.status == "ok").count();
-    let sources_failed = packed.iter().filter(|p| p.status == "failed").count();
-    let destinations_ok = dest_results
-        .iter()
-        .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some("ok"))
-        .count();
-    let destinations_failed = dest_results
-        .iter()
-        .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some("failed"))
-        .count();
-
-    let overall = if destinations_ok > 0 && destinations_failed == 0 && sources_failed == 0 {
-        "ok"
-    } else if destinations_ok > 0 {
-        "partial"
-    } else {
-        "failed"
-    };
-
-    let source_values: Vec<serde_json::Value> = packed
-        .iter()
-        .map(|p| {
-            json!({
-                "key": p.key,
-                "type": p.source_type,
-                "label": p.label,
-                "enabled_paths": p.enabled_paths,
-                "root_path": p.root_path.to_string_lossy(),
-                "archive": p.archive_name,
-                "bytes": p.bytes,
-                "sha256": p.sha256,
-                "file_count": p.file_count,
-                "status": p.status,
-                "error": p.error,
-            })
-        })
-        .collect();
-
     let run_id = format!("run_{}", uuid::Uuid::new_v4());
     let result = BackupRunResult {
         id: run_id,
         created_at: timestamp,
         hostname,
         trigger: trigger.to_string(),
-        overall_status: overall.to_string(),
+        overall_status: summary.overall.to_string(),
         work_dir: work_root.to_string_lossy().to_string(),
-        sources: source_values,
+        sources: packed.iter().map(source_value).collect(),
         destinations: dest_results,
-        message: format!(
-            "源成功 {sources_ok}，源失败 {sources_failed}；目标成功 {destinations_ok}，目标失败 {destinations_failed}"
-        ),
+        message: summary.message(),
     };
 
     append_history(&result)?;
@@ -492,31 +454,82 @@ fn write_to_local(target: &Path, packed: &[PackedSource]) -> Result<String, Stri
     Ok(target.to_string_lossy().to_string())
 }
 
+struct Summary {
+    sources_ok: usize,
+    sources_failed: usize,
+    sources_warned: usize,
+    destinations_ok: usize,
+    destinations_failed: usize,
+    overall: &'static str,
+}
+
+impl Summary {
+    fn new(packed: &[PackedSource], dest_results: &[serde_json::Value]) -> Self {
+        let count_dest = |status: &str| {
+            dest_results
+                .iter()
+                .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some(status))
+                .count()
+        };
+        let sources_ok = packed.iter().filter(|p| p.status == "ok").count();
+        let sources_failed = packed.iter().filter(|p| p.status == "failed").count();
+        let sources_warned = packed.iter().filter(|p| !p.warnings.is_empty()).count();
+        let destinations_ok = count_dest("ok");
+        let destinations_failed = count_dest("failed");
+        let overall = if destinations_ok == 0 {
+            "failed"
+        } else if destinations_failed == 0 && sources_failed == 0 && sources_warned == 0 {
+            "ok"
+        } else {
+            "partial"
+        };
+        Self {
+            sources_ok,
+            sources_failed,
+            sources_warned,
+            destinations_ok,
+            destinations_failed,
+            overall,
+        }
+    }
+
+    fn message(&self) -> String {
+        let mut msg = format!(
+            "源成功 {}，源失败 {}；目标成功 {}，目标失败 {}",
+            self.sources_ok, self.sources_failed, self.destinations_ok, self.destinations_failed
+        );
+        if self.sources_warned > 0 {
+            msg.push_str(&format!("；{} 个源有文件被跳过", self.sources_warned));
+        }
+        msg
+    }
+}
+
+fn source_value(p: &PackedSource) -> serde_json::Value {
+    json!({
+        "key": p.key,
+        "type": p.source_type,
+        "label": p.label,
+        "enabled_paths": p.enabled_paths,
+        "root_path": p.root_path.to_string_lossy(),
+        "archive": p.archive_name,
+        "bytes": p.bytes,
+        "sha256": p.sha256,
+        "file_count": p.file_count,
+        "status": p.status,
+        "error": p.error,
+        "warnings": p.warnings,
+    })
+}
+
 fn build_manifest_value(
     packed: &[PackedSource],
     cfg: &AppConfig,
     hostname: &str,
     timestamp: &str,
     dest_results: &[serde_json::Value],
+    summary: &Summary,
 ) -> serde_json::Value {
-    let sources_ok = packed.iter().filter(|p| p.status == "ok").count();
-    let sources_failed = packed.iter().filter(|p| p.status == "failed").count();
-    let destinations_ok = dest_results
-        .iter()
-        .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some("ok"))
-        .count();
-    let destinations_failed = dest_results
-        .iter()
-        .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some("failed"))
-        .count();
-    let overall = if destinations_ok > 0 && destinations_failed == 0 && sources_failed == 0 {
-        "ok"
-    } else if destinations_ok > 0 {
-        "partial"
-    } else {
-        "failed"
-    };
-
     json!({
         "manifest_version": 1,
         "app_version": env!("CARGO_PKG_VERSION"),
@@ -526,26 +539,15 @@ fn build_manifest_value(
             "enabled": cfg.encryption.enabled,
             "algorithm": if cfg.encryption.enabled { "zip-aes256" } else { "none" }
         },
-        "sources": packed.iter().map(|p| json!({
-            "key": p.key,
-            "type": p.source_type,
-            "label": p.label,
-            "enabled_paths": p.enabled_paths,
-            "root_path": p.root_path.to_string_lossy(),
-            "archive": p.archive_name,
-            "bytes": p.bytes,
-            "sha256": p.sha256,
-            "file_count": p.file_count,
-            "status": p.status,
-            "error": p.error,
-        })).collect::<Vec<_>>(),
+        "sources": packed.iter().map(source_value).collect::<Vec<_>>(),
         "destinations": dest_results,
         "summary": {
-            "sources_ok": sources_ok,
-            "sources_failed": sources_failed,
-            "destinations_ok": destinations_ok,
-            "destinations_failed": destinations_failed,
-            "overall_status": overall,
+            "sources_ok": summary.sources_ok,
+            "sources_failed": summary.sources_failed,
+            "sources_warned": summary.sources_warned,
+            "destinations_ok": summary.destinations_ok,
+            "destinations_failed": summary.destinations_failed,
+            "overall_status": summary.overall,
         }
     })
 }

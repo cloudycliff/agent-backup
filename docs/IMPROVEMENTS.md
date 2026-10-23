@@ -68,7 +68,7 @@
 | 1 | 打包跟随链接；新增 `~/.agents` 预设；测试使用隔离的配置目录 | A1 A2 C6（部分） | 已完成 |
 | 2 | 耗时命令改为异步执行；进度按原始字节统一计算并在源内更新 | B1 B2 B3 | 已完成 |
 | 3 | 新增 `app_data` 根类型与 `detect` 字段；修正 Aider / Gemini / Continue；补 Cursor / Kiro / Windsurf 编辑器用户设置；修正深度 0 过滤 | A3 A4 A5 A6 | 已完成 |
-| 4 | 单文件失败降级为警告；配置原子写入 + `serde(default)`；预设出错回退内置；定时补跑 | A7 B4 B5 B6 | 待处理 |
+| 4 | 单文件失败降级为警告；配置原子写入 + `serde(default)`；预设出错回退内置；定时补跑 | A7 B4 B5 B6 | 已完成 |
 | 5 | 流式压缩 + 归档哈希；单次遍历；定时备份内容无变化时跳过；去重与类型统一；S3 运行时复用；移除未用依赖 | C1 C2 C3 C7 D1 D2 D3 D4 D5 | 待处理 |
 
 未纳入计划、留作后续：C4 C5 D6，以及第 5 节的易用性与可扩展性条目。
@@ -123,3 +123,29 @@
 - 本机冒烟产物：`cursor-editor` zip 含 `settings.json`、`keybindings.json`；`kiro-editor` zip 含 `settings.json`；Windsurf 与 Aider 本机未安装，未生成归档。
 
 兼容性：已有 `config.json` 里 Aider 的 `history`、Continue 分组状态等旧键会被忽略，不影响加载。
+
+### 步骤 4：容错与定时补跑
+
+改动：
+- `packager.rs`：
+  - 收集阶段的遍历错误（链接失效、循环链接、无权限）和打包阶段的读文件错误都改为警告，跳过该文件继续；全部文件都读不了才判为失败。每个源最多保留 20 条警告。
+  - 先读文件再写 zip 条目，避免读失败时留下空条目。
+  - 顺带消除了 `PackedSource` 的 8 处重复构造（`PackedSource::new` / `failed` / `pack`），以及估算与打包两套重复的 include 拼接（C1 的一部分）。
+- `backup.rs`：
+  - 抽出 `Summary`，结果与 manifest 共用（原来整体状态算两遍）。
+  - 有警告的源计入 `sources_warned`，整体状态记为 `partial`，消息里写明"N 个源有文件被跳过"；`sources[].warnings` 写入结果、历史和 manifest。
+  - 备份锁中毒（上次备份 panic）时继续使用，不再永久报"正在进行"；"正在进行"的提示改为常量 `BACKUP_BUSY`，调度器按常量判断。
+- `presets.rs`：`load_merged_presets` + `resolve_agents` 合并为 `load_presets`，返回预设、解析后的 Agent 和警告。用户预设读不了或解析失败时回退内置预设；单个 Agent 缺 `root`、`root.kind` 不支持时跳过该 Agent。
+- `config.rs`：
+  - 所有配置结构加 `#[serde(default)]`，`AgentSourceState.enabled` / `CustomSource.enabled` 缺省为 `true`；新增字段或缺字段的旧配置都能加载。
+  - 新增 `write_atomic`（写 `.tmp` 再改名），用于配置和定时状态。
+  - `ensure_agent_defaults` 返回是否有变化，`get_bootstrap` 只在有变化时写配置。
+- `scheduler.rs`：状态改记 `last_run_at`（兼容旧的 `last_run_date`）。只要"最近一个应执行时间点"之后没有跑过就执行，睡眠、关机后会补跑一次；首次看到定时配置时从当前时间开始计，不会立刻触发。除"正在进行"外，成功或失败都记录本次尝试，不再同一分钟内重复失败通知；"正在进行"时下个周期（20 秒后）再试。
+- `App.tsx`：顶部显示预设警告；记录详情里显示每个源的警告；定时说明补充补跑行为。
+- 新增测试：失效联接与被独占锁定的文件变为警告且其余文件正常打包、循环链接产生警告、坏 Agent 被跳过、部分字段的配置能补默认值、原子写覆盖已有文件且不留临时文件、定时到期判断（含隔天补跑）、旧状态格式兼容。
+
+验证：
+- `cargo test` 15 个测试通过；`npx tsc --noEmit` 通过；无新增编译警告。
+- 本机冒烟产物 manifest：12 个源全部成功，`sources_warned` 为 0。
+
+行为变化：以前单个文件读失败会让整个源失败（`failed`），现在是跳过该文件、整体 `partial`。如果某个文件长期被占用，每次备份都会提示一次，直到在排除规则里排除它。
