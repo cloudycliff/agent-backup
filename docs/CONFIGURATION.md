@@ -15,8 +15,10 @@
 内置默认预设打包在应用内：`agent-presets.default.json`。  
 若用户配置目录没有 `agent-presets.json`，则完全使用内置默认。
 
-内置覆盖的 Agent（按 `key`）：`cursor`、`cursor-cli`、`claude-code`、`codex`、`workbuddy`、`windsurf`、`continue`、`cline`、`kiro`、`aider`、`gemini`、`shared-agents`。  
-`root.win` / `root.mac` 支持多级路径，例如 Windsurf 用 `.codeium/windsurf`。
+内置覆盖的 Agent（按 `key`）：`cursor`、`cursor-cli`、`claude-code`、`codex`、`workbuddy`、`windsurf`、`continue`、`cline`、`kiro`、`aider`、`gemini`、`shared-agents`，以及编辑器用户设置 `cursor-editor`、`windsurf-editor`、`kiro-editor`。  
+`root.win` / `root.mac` 支持多级路径，例如 Windsurf 用 `.codeium/windsurf`；留空表示根目录本身（Aider 的配置文件就直接放在主目录下）。
+
+编辑器用户设置（`settings.json`、`keybindings.json`、`snippets/`、`profiles/` 等）不在 `~/.xxx` 下，而在系统应用数据目录：Windows 为 `%APPDATA%\<产品>\User`，macOS 为 `~/Library/Application Support/<产品>/User`，所以单独作为 `app_data` 类型的预设。
 
 打包时会跟随软链接和目录联接（Junction），链接目录里的内容按链接所在位置写入 zip，循环链接会被跳过。`shared-agents` 对应 `~/.agents/skills`：很多 skills 管理工具把技能放在这里，再链接到各个 Agent 的 `skills/` 下。
 
@@ -71,7 +73,8 @@
           "include": ["sessions/"]
         }
       ],
-      "hard_exclude": ["credentials/", "*.key", "cache/"]
+      "hard_exclude": ["credentials/", "*.key", "cache/"],
+      "detect": ["settings.json"]
     }
   ]
 }
@@ -84,12 +87,15 @@
 | `key` | 稳定 ID，用于 config 勾选与 zip 文件名 |
 | `label` | UI 显示名 |
 | `disabled` | `true` 时不探测、不显示 |
-| `root.kind` | 目前仅支持 `home_subdir`（相对用户主目录） |
-| `root.win` / `root.mac` | 相对主目录的子路径 |
+| `root.kind` | `home_subdir`：相对用户主目录；`app_data`：相对系统应用数据目录（Windows `%APPDATA%`，macOS `~/Library/Application Support`） |
+| `root.win` / `root.mac` | 相对上述基准目录的子路径；留空即基准目录本身 |
 | `root.env_override` | 若该环境变量有值，优先作为根目录 |
 | `groups[].id` | 勾选键，对应 `config.sources.agents.<key>.paths.<id>` |
 | `groups[].include` | 相对根的文件或目录；目录请以 `/` 结尾 |
-| `hard_exclude` | 该 Agent 打包时始终排除（先于全局 exclusions） |
+| `hard_exclude` | 该 Agent 打包时始终排除（先于全局 exclusions）；以 `/` 结尾的名字会排除任意层级的同名目录 |
+| `detect` | 可选。根目录下任一路径存在才算"已安装"；不填则根目录存在即算。多个 Agent 共用根目录时用来区分 |
+
+`groups[].include` 中显式写出的目录不受全局排除名影响（例如 Gemini 的 `tmp/`），但其内部的同名子目录仍会被排除。
 
 ## config.json 要点
 

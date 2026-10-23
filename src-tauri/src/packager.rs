@@ -122,6 +122,9 @@ fn collect_files(
             .follow_links(true)
             .into_iter()
             .filter_entry(|e| {
+                if e.depth() == 0 {
+                    return true;
+                }
                 if e.file_type().is_dir() {
                     let name = e.file_name().to_string_lossy();
                     !should_skip_dir(&name, &dir_globs)
@@ -607,6 +610,19 @@ mod tests {
 
         let tree = collect_files_tree(&base.join("root"), &excl, &[]).unwrap();
         assert_eq!(rels(&tree), vec!["skills/local.md", "skills/skill-a/SKILL.md"]);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn explicit_include_is_not_dropped_by_global_dir_excludes() {
+        let base = temp_base("depth0");
+        fs::create_dir_all(base.join("tmp").join("chat").join("tmp")).unwrap();
+        fs::write(base.join("tmp").join("chat").join("log.json"), "a").unwrap();
+        fs::write(base.join("tmp").join("chat").join("tmp").join("x"), "b").unwrap();
+
+        let excl = AppConfig::default().exclusions;
+        let files = collect_files(&base, &["tmp/".into()], &excl, &[]).unwrap();
+        assert_eq!(rels(&files), vec!["tmp/chat/log.json"]);
         let _ = fs::remove_dir_all(&base);
     }
 

@@ -85,7 +85,33 @@
           "include": ["chats/"]
         }
       ],
-      "hard_exclude": []
+      "hard_exclude": [],
+      "detect": ["cli-config.json", "chats/"]
+    },
+    {
+      "key": "cursor-editor",
+      "label": "Cursor 编辑器设置",
+      "root": {
+        "kind": "app_data",
+        "win": "Cursor/User",
+        "mac": "Cursor/User",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "settings",
+          "label": "设置 / 快捷键 / 代码片段",
+          "default_enabled": true,
+          "include": [
+            "settings.json",
+            "keybindings.json",
+            "tasks.json",
+            "snippets/",
+            "profiles/"
+          ]
+        }
+      ],
+      "hard_exclude": ["globalStorage/", "workspaceStorage/", "History/"]
     },
     {
       "key": "claude-code",
@@ -327,6 +353,31 @@
       "hard_exclude": ["*.log", "cache/"]
     },
     {
+      "key": "windsurf-editor",
+      "label": "Windsurf 编辑器设置",
+      "root": {
+        "kind": "app_data",
+        "win": "Windsurf/User",
+        "mac": "Windsurf/User",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "settings",
+          "label": "设置 / 快捷键 / 代码片段",
+          "default_enabled": true,
+          "include": [
+            "settings.json",
+            "keybindings.json",
+            "tasks.json",
+            "snippets/",
+            "profiles/"
+          ]
+        }
+      ],
+      "hard_exclude": ["globalStorage/", "workspaceStorage/", "History/"]
+    },
+    {
       "key": "continue",
       "label": "Continue",
       "root": {
@@ -362,9 +413,9 @@
         },
         {
           "id": "sessions",
-          "label": "会话 / 索引",
+          "label": "会话",
           "default_enabled": false,
-          "include": ["sessions/", "index/", "dev_data/"]
+          "include": ["sessions/", "dev_data/"]
         }
       ],
       "hard_exclude": ["index/", "*.sqlite", "*.sqlite-shm", "*.sqlite-wal"]
@@ -432,12 +483,37 @@
       "hard_exclude": ["Cache/", "CachedData/", "logs/"]
     },
     {
+      "key": "kiro-editor",
+      "label": "Kiro 编辑器设置",
+      "root": {
+        "kind": "app_data",
+        "win": "Kiro/User",
+        "mac": "Kiro/User",
+        "env_override": null
+      },
+      "groups": [
+        {
+          "id": "settings",
+          "label": "设置 / 快捷键 / 代码片段",
+          "default_enabled": true,
+          "include": [
+            "settings.json",
+            "keybindings.json",
+            "tasks.json",
+            "snippets/",
+            "profiles/"
+          ]
+        }
+      ],
+      "hard_exclude": ["globalStorage/", "workspaceStorage/", "History/"]
+    },
+    {
       "key": "aider",
       "label": "Aider",
       "root": {
         "kind": "home_subdir",
-        "win": ".aider",
-        "mac": ".aider",
+        "win": "",
+        "mac": "",
         "env_override": null
       },
       "groups": [
@@ -445,16 +521,20 @@
           "id": "config",
           "label": "配置",
           "default_enabled": true,
-          "include": [".aider.conf.yml", "config.yml", "config.yaml"]
-        },
-        {
-          "id": "history",
-          "label": "历史",
-          "default_enabled": false,
-          "include": ["chat-history/", "history/"]
+          "include": [
+            ".aider.conf.yml",
+            ".aider.model.settings.yml",
+            ".aider.model.metadata.json"
+          ]
         }
       ],
-      "hard_exclude": ["*.key", "cache/"]
+      "hard_exclude": [],
+      "detect": [
+        ".aider.conf.yml",
+        ".aider.model.settings.yml",
+        ".aider.model.metadata.json",
+        ".aider/"
+      ]
     },
     {
       "key": "gemini",
@@ -480,12 +560,12 @@
         },
         {
           "id": "history",
-          "label": "历史",
+          "label": "历史（会话与检查点）",
           "default_enabled": false,
           "include": ["tmp/", "history/", "sessions/"]
         }
       ],
-      "hard_exclude": ["tmp/", "cache/", "*.log"]
+      "hard_exclude": ["cache/", "*.log"]
     },
     {
       "key": "shared-agents",

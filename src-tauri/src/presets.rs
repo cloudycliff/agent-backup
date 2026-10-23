@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::{user_presets_path, AgentSourceState, AppConfig};
 
@@ -27,6 +27,8 @@ pub struct AgentPreset {
     pub groups: Option<Vec<PathGroup>>,
     #[serde(default)]
     pub hard_exclude: Option<Vec<String>>,
+    #[serde(default)]
+    pub detect: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +96,9 @@ fn merge_presets(mut defaults: PresetFile, user: PresetFile) -> PresetFile {
                 if u.hard_exclude.is_some() {
                     existing.hard_exclude = u.hard_exclude;
                 }
+                if u.detect.is_some() {
+                    existing.detect = u.detect;
+                }
             }
             None => {
                 map.insert(u.key.clone(), u);
@@ -121,7 +126,10 @@ pub fn resolve_agents(presets: &PresetFile) -> Result<Vec<ResolvedAgent>, String
             .clone()
             .unwrap_or_else(|| agent.key.clone());
         let root_path = resolve_root_path(&root)?;
-        let installed = root_path.as_ref().map(|p| p.exists()).unwrap_or(false);
+        let detect = agent.detect.clone().unwrap_or_default();
+        let installed = root_path
+            .as_deref()
+            .is_some_and(|p| detect_installed(p, &detect));
         out.push(ResolvedAgent {
             key: agent.key.clone(),
             label,
@@ -136,10 +144,45 @@ pub fn resolve_agents(presets: &PresetFile) -> Result<Vec<ResolvedAgent>, String
     Ok(out)
 }
 
-pub fn resolve_root_path(root: &RootSpec) -> Result<Option<PathBuf>, String> {
-    if root.kind != "home_subdir" {
-        return Err(format!("暂不支持 root.kind = {}", root.kind));
+fn detect_installed(root: &Path, detect: &[String]) -> bool {
+    if !root.exists() {
+        return false;
     }
+    detect.is_empty()
+        || detect
+            .iter()
+            .any(|rel| root.join(rel.trim_end_matches(['/', '\\'])).exists())
+}
+
+fn home_dir() -> Result<PathBuf, String> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| "无法解析用户主目录".to_string())
+}
+
+fn app_data_dir() -> Result<PathBuf, String> {
+    if cfg!(target_os = "windows") {
+        if let Some(dir) = env::var_os("APPDATA").filter(|v| !v.is_empty()) {
+            return Ok(PathBuf::from(dir));
+        }
+        return Ok(home_dir()?.join("AppData").join("Roaming"));
+    }
+    if cfg!(target_os = "macos") {
+        return Ok(home_dir()?.join("Library").join("Application Support"));
+    }
+    if let Some(dir) = env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    Ok(home_dir()?.join(".config"))
+}
+
+pub fn resolve_root_path(root: &RootSpec) -> Result<Option<PathBuf>, String> {
+    let base = match root.kind.as_str() {
+        "home_subdir" => home_dir()?,
+        "app_data" => app_data_dir()?,
+        other => return Err(format!("暂不支持 root.kind = {other}")),
+    };
     if let Some(env_name) = root
         .env_override
         .as_ref()
@@ -153,16 +196,12 @@ pub fn resolve_root_path(root: &RootSpec) -> Result<Option<PathBuf>, String> {
             }
         }
     }
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .ok_or_else(|| "无法解析用户主目录".to_string())?;
     let sub = if cfg!(target_os = "windows") {
         &root.win
     } else {
         &root.mac
     };
-    let mut path = home;
+    let mut path = base;
     for part in sub.split(['/', '\\']).filter(|p| !p.is_empty()) {
         path = path.join(part);
     }
@@ -220,4 +259,51 @@ pub fn write_user_presets_template_if_missing() -> Result<PathBuf, String> {
         fs::write(&path, raw).map_err(|e| e.to_string())?;
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn root(kind: &str, sub: &str) -> RootSpec {
+        RootSpec {
+            kind: kind.into(),
+            win: sub.into(),
+            mac: sub.into(),
+            env_override: None,
+        }
+    }
+
+    #[test]
+    fn empty_subdir_resolves_to_home() {
+        let path = resolve_root_path(&root("home_subdir", "")).unwrap().unwrap();
+        assert_eq!(path, home_dir().unwrap());
+    }
+
+    #[test]
+    fn app_data_root_resolves_under_platform_dir() {
+        let path = resolve_root_path(&root("app_data", "Cursor/User")).unwrap().unwrap();
+        assert_eq!(path, app_data_dir().unwrap().join("Cursor").join("User"));
+        assert!(resolve_root_path(&root("bogus", "x")).is_err());
+    }
+
+    #[test]
+    fn detect_requires_a_marker_when_given() {
+        let base = std::env::temp_dir().join(format!("agent-backup-detect-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(base.join("marker-dir")).unwrap();
+        assert!(detect_installed(&base, &[]));
+        assert!(!detect_installed(&base, &["cli-config.json".into()]));
+        assert!(detect_installed(&base, &["cli-config.json".into(), "marker-dir/".into()]));
+        assert!(!detect_installed(&base.join("missing"), &[]));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn builtin_presets_resolve() {
+        let presets: PresetFile = serde_json::from_str(DEFAULT_PRESETS).unwrap();
+        let agents = resolve_agents(&presets).unwrap();
+        for key in ["cursor-cli", "cursor-editor", "kiro-editor", "windsurf-editor", "aider"] {
+            assert!(agents.iter().any(|a| a.key == key), "missing preset {key}");
+        }
+    }
 }

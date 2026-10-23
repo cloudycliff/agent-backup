@@ -7,7 +7,7 @@
 
 所以有了这个项目：把本机已经装好的 Agent 配置，**单向备份**到本地目录或 S3 兼容存储。不追求花哨的双向同步，先保证「换机 / 翻车时还有一份」。
 
-目前支持：**Windows + macOS**。内置探测 Cursor、Cursor CLI、Claude Code、Codex、Workbuddy、Windsurf、Continue、Cline、Kiro、Aider、Gemini CLI，以及共享技能目录 `~/.agents`；也可以自己加文件夹。
+目前支持：**Windows + macOS**。内置探测 Cursor、Cursor CLI、Claude Code、Codex、Workbuddy、Windsurf、Continue、Cline、Kiro、Aider、Gemini CLI，共享技能目录 `~/.agents`，以及 Cursor / Windsurf / Kiro 的编辑器用户设置；也可以自己加文件夹。
 
 备份时会先做**体积预估**，过程中显示进度（按源打包 / 按目标写入）。
 

@@ -67,7 +67,7 @@
 |---|---|---|---|
 | 1 | 打包跟随链接；新增 `~/.agents` 预设；测试使用隔离的配置目录 | A1 A2 C6（部分） | 已完成 |
 | 2 | 耗时命令改为异步执行；进度按原始字节统一计算并在源内更新 | B1 B2 B3 | 已完成 |
-| 3 | 新增 `app_data` 根类型与 `detect` 字段；修正 Aider / Gemini / Continue；补 Cursor / Kiro / Windsurf 编辑器用户设置；修正深度 0 过滤 | A3 A4 A5 A6 | 待处理 |
+| 3 | 新增 `app_data` 根类型与 `detect` 字段；修正 Aider / Gemini / Continue；补 Cursor / Kiro / Windsurf 编辑器用户设置；修正深度 0 过滤 | A3 A4 A5 A6 | 已完成 |
 | 4 | 单文件失败降级为警告；配置原子写入 + `serde(default)`；预设出错回退内置；定时补跑 | A7 B4 B5 B6 | 待处理 |
 | 5 | 流式压缩 + 归档哈希；单次遍历；定时备份内容无变化时跳过；去重与类型统一；S3 运行时复用；移除未用依赖 | C1 C2 C3 C7 D1 D2 D3 D4 D5 | 待处理 |
 
@@ -103,3 +103,23 @@
 验证：
 - `cargo test` 4 个测试通过；`npx tsc --noEmit` 通过；无新增编译警告。
 - 未做界面实操验证（需要桌面环境手动点一次"立即备份"确认进度条连续更新、窗口不卡顿）。
+
+### 步骤 3：预设修正与新根类型
+
+改动：
+- `presets.rs`：`root.kind` 新增 `app_data`（Windows `%APPDATA%`，macOS `~/Library/Application Support`，其他平台 `XDG_CONFIG_HOME` 或 `~/.config`）；子路径留空表示基准目录本身。
+- `presets.rs`：预设新增可选 `detect` 字段，根目录下任一标志路径存在才算已安装；用户预设可覆盖。
+- `packager.rs`：`collect_files` 在遍历深度 0 不再套用目录排除名，显式 include 的 `tmp/` 等目录能正常收录，内部同名子目录仍排除。
+- 预设调整：
+  - Aider：根目录改为主目录，收 `.aider.conf.yml`、`.aider.model.settings.yml`、`.aider.model.metadata.json`；去掉无效的"历史"分组（Aider 历史在各项目目录里，属于产品边界外）；用 `detect` 判断是否安装。
+  - Gemini：`hard_exclude` 去掉 `tmp/`，"历史"分组勾选后可以收到 `tmp/` 下的会话与检查点。
+  - Continue："会话"分组去掉与 `hard_exclude` 冲突的 `index/`（可重建的索引）。
+  - Cursor CLI：加 `detect`（`cli-config.json` / `chats/`），只有 IDE 时不再显示为已安装。
+  - 新增 `cursor-editor`、`windsurf-editor`、`kiro-editor`，备份编辑器 `User` 目录下的设置、快捷键、任务、代码片段和 profiles，排除 `globalStorage/`、`workspaceStorage/`、`History/`。
+- 新增测试：空子路径解析为主目录、`app_data` 解析与未知类型报错、`detect` 判断、内置预设全部可解析、显式 include 不被全局排除名剔除。
+
+验证：
+- `cargo test` 9 个测试通过。
+- 本机冒烟产物：`cursor-editor` zip 含 `settings.json`、`keybindings.json`；`kiro-editor` zip 含 `settings.json`；Windsurf 与 Aider 本机未安装，未生成归档。
+
+兼容性：已有 `config.json` 里 Aider 的 `history`、Continue 分组状态等旧键会被忽略，不影响加载。
